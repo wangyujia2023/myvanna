@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vanna Skill — 智能问数管理台</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<style>
+/* ── CSS 变量 ─────────────────────────────────────────────────────────────── */
+:root{
+  --bg:#0d1117;--surface:#161b22;--surface2:#1c2128;--border:#30363d;
+  --text:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+  --blue:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;
+  --purple:#bc8cff;--orange:#f0883e;
+  --radius:8px;--mono:'SF Mono','Fira Code',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh;display:flex;flex-direction:column}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:16px;height:52px;flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--text);text-decoration:none}
+.logo-icon{width:28px;height:28px;background:linear-gradient(135deg,var(--blue),var(--purple));border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.nav{display:flex;gap:2px;margin-left:auto}
+.nav-btn{background:none;border:none;color:var(--text2);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;transition:all .15s;display:flex;align-items:center;gap:6px}
+.nav-btn:hover{background:var(--surface2);color:var(--text)}
+.nav-btn.active{background:var(--surface2);color:var(--blue)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);margin-left:auto;transition:background .3s}
+.status-dot.ok{background:var(--green)}
+.status-dot.err{background:var(--red)}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.main{flex:1;display:flex;overflow:hidden}
+.page{display:none;flex:1;overflow:hidden}
+.page.active{display:flex}
+
+/* ── Query Page ──────────────────────────────────────────────────────────── */
+#page-query{flex-direction:column;gap:0}
+.query-top{padding:20px 24px 0;flex-shrink:0}
+.query-input-row{display:flex;gap:10px;align-items:flex-end}
+.query-side{display:flex;flex-direction:column;gap:6px;min-width:150px}
+.q-textarea{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:12px 14px;font-size:14px;resize:none;outline:none;font-family:inherit;transition:border .15s;min-height:60px;max-height:120px}
+.q-textarea:focus{border-color:var(--blue)}
+.btn{padding:8px 16px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s}
+.btn-primary{background:var(--blue);color:#fff}
+.btn-primary:hover{opacity:.85}
+.btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{border-color:var(--blue);color:var(--blue)}
+.btn-success{background:var(--green);color:#fff}
+.btn-success:hover{opacity:.85}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover{opacity:.85}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.suggested-qs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.sq-chip{background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s}
+.sq-chip:hover{border-color:var(--blue);color:var(--blue)}
+
+.query-body{flex:1;display:flex;overflow:hidden;gap:0}
+
+/* 左：调用链路 */
+.chain-panel{width:420px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden}
+.panel-header{padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.panel-title{font-size:13px;font-weight:600;color:var(--text2)}
+.trace-meta{display:flex;gap:12px;font-size:11px;color:var(--text3);margin-left:auto}
+.trace-meta span{display:flex;align-items:center;gap:4px}
+.chain-body{flex:1;overflow-y:auto;padding:12px}
+
+/* 步骤卡片 */
+.step-card{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden;transition:border-color .2s}
+.step-card.running{border-color:var(--blue);animation:pulse-border 1.5s ease-in-out infinite}
+.step-card.ok{border-color:var(--border)}
+.step-card.error{border-color:var(--red)}
+.step-card.cached{border-color:var(--purple);opacity:.8}
+@keyframes pulse-border{0%,100%{border-color:var(--blue)}50%{border-color:#1f6feb}}
+.step-header{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;user-select:none;background:var(--surface)}
+.step-header:hover{background:var(--surface2)}
+.step-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.step-icon.running{background:#1f6feb;animation:spin 1.2s linear infinite}
+.step-icon.ok{background:#238636}
+.step-icon.error{background:#da3633}
+.step-icon.cached{background:#6e40c9}
+@keyframes spin{to{transform:rotate(360deg)}}
+.step-name{font-size:13px;font-weight:500;flex:1}
+.step-badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600}
+.step-badge.cached{background:#6e40c920;color:var(--purple);border:1px solid #6e40c940}
+.step-badge.fresh{background:#238636 20;color:var(--green);border:1px solid #23863640}
+.step-badge.model{background:#1f6feb20;color:var(--blue);border:1px solid #1f6feb40}
+.step-dur{font-size:11px;color:var(--text3);font-family:var(--mono)}
+.step-detail{padding:10px 14px;background:var(--bg);border-top:1px solid var(--border);font-size:12px;display:none}
+.step-detail.open{display:block}
+.detail-row{display:flex;gap:8px;margin-bottom:4px;line-height:1.5}
+.detail-label{color:var(--text3);min-width:60px;flex-shrink:0}
+.detail-val{color:var(--text2);word-break:break-all;font-family:var(--mono)}
+.detail-val.highlight{color:var(--blue)}
+.detail-block{margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:320px;font-family:var(--mono);line-height:1.5}
+.detail-subtitle{margin-top:10px;margin-bottom:4px;color:var(--text2);font-size:12px;font-weight:600}
+
+/* 右：SQL + 结果 */
+.result-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.result-body{flex:1;overflow-y:auto;padding:16px 20px}
+
+/* SQL 区域 */
+.sql-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
+.sql-card-header{padding:10px 16px;display:flex;align-items:center;gap:8px;background:var(--surface2);border-bottom:1px solid var(--border)}
+.sql-card-title{font-size:13px;font-weight:600;color:var(--text2);flex:1}
+.sql-actions{display:flex;gap:6px}
+pre[class*="language-"]{margin:0!important;border-radius:0!important;background:var(--bg)!important;padding:14px 16px!important;font-size:12.5px!important;max-height:240px;overflow:auto}
+.feedback-row{display:flex;gap:8px;padding:10px 16px;border-top:1px solid var(--border);background:var(--surface)}
+.feedback-label{font-size:12px;color:var(--text3);display:flex;align-items:center;margin-right:4px}
+
+/* 执行结果表格 */
+.result-table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.result-table-header{padding:10px 16px;display:flex;align-items:center;gap:8px;background:var(--surface2);border-bottom:1px solid var(--border)}
+.table-scroll{overflow:auto;max-height:300px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{background:var(--surface2);padding:8px 12px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0}
+td{padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);word-break:break-all;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr:hover td{background:var(--surface2)}
+.empty-state{text-align:center;padding:48px 24px;color:var(--text3)}
+.empty-icon{font-size:40px;margin-bottom:12px}
+.empty-text{font-size:14px}
+
+/* ── Manage Page ─────────────────────────────────────────────────────────── */
+#page-manage{flex-direction:column}
+.tabs-bar{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;padding:0 20px}
+.tab-btn{padding:10px 16px;background:none;border:none;color:var(--text2);cursor:pointer;font-size:13px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
+.tab-btn.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tab-content{flex:1;overflow:auto;padding:20px}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+
+/* 卡片 */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px}
+.card-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.card-title{font-size:13px;font-weight:600}
+.card-body{padding:16px}
+
+/* 表单 */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-grid.full{grid-template-columns:1fr}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-label{font-size:12px;color:var(--text2);font-weight:500}
+.form-input{background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;outline:none;transition:border .15s;font-family:inherit;width:100%}
+.form-input:focus{border-color:var(--blue)}
+.form-textarea{resize:vertical;min-height:80px;font-family:var(--mono)}
+select.form-input option{background:var(--surface)}
+
+/* 筛选栏 */
+.filter-bar{display:flex;gap:10px;margin-bottom:14px;align-items:center}
+
+/* 统计卡片行 */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.stat-val{font-size:24px;font-weight:700;color:var(--text);margin-bottom:2px}
+.stat-label{font-size:12px;color:var(--text2)}
+
+/* ── Config Page ─────────────────────────────────────────────────────────── */
+#page-config{flex-direction:column;padding:24px;overflow-y:auto;max-width:700px}
+
+/* ── Log Page ────────────────────────────────────────────────────────────── */
+#page-log{flex-direction:column}
+.log-body{flex:1;display:flex;gap:0;overflow:hidden}
+.log-list{width:380px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto}
+.log-item{padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.log-item:hover{background:var(--surface2)}
+.log-item.selected{background:var(--surface2);border-left:2px solid var(--blue)}
+.log-item-top{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.log-status{font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600}
+.log-status.ok{background:#23863630;color:var(--green)}
+.log-status.error{background:#da363330;color:var(--red)}
+.log-status.running{background:#1f6feb30;color:var(--blue)}
+.log-q{font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+.log-meta{font-size:11px;color:var(--text3)}
+.log-detail{flex:1;overflow-y:auto;padding:16px}
+
+/* ── Misc ────────────────────────────────────────────────────────────────── */
+.badge{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 20px;font-size:13px;z-index:999;animation:slide-in .2s ease;box-shadow:0 8px 24px #0005}
+.toast.success{border-color:var(--green);color:var(--green)}
+.toast.error{border-color:var(--red);color:var(--red)}
+@keyframes slide-in{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--text3);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
+.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
+code{font-family:var(--mono);background:var(--surface2);border-radius:4px;padding:1px 5px;font-size:12px;color:var(--blue)}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text2)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--surface)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- ═══ Header ════════════════════════════════════════════════════════════ -->
+<header class="header">
+  <a class="logo" href="#">
+    <div class="logo-icon">🧠</div>
+    <span>Vanna Skill</span>
+  </a>
+  <span style="color:var(--text3);font-size:12px" id="db-info">retail_dw @ 10.26.20.3</span>
+
+  <nav class="nav">
+    <button class="nav-btn active" onclick="showPage('query')" id="nav-query">🔍 问数验证</button>
+    <button class="nav-btn" onclick="showPage('manage')" id="nav-manage">⚙️ 训练管理</button>
+    <button class="nav-btn" onclick="showPage('log')" id="nav-log">📋 调用日志</button>
+    <button class="nav-btn" onclick="showPage('config')" id="nav-config">🔧 配置</button>
+  </nav>
+  <div class="status-dot" id="status-dot" title="连接状态"></div>
+</header>
+
+<main class="main">
+
+<!-- ═══ 问数验证 ══════════════════════════════════════════════════════════ -->
+<div class="page active" id="page-query">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+
+    <!-- 输入区 -->
+    <div class="query-top">
+      <div class="query-input-row">
+        <textarea class="q-textarea" id="question" rows="2"
+          placeholder="用自然语言提问，例如：上个月各地区销售总额排名？"
+          onkeydown="if(event.ctrlKey&&event.key==='Enter')doAsk()"></textarea>
+        <div class="query-side">
+          <select class="form-input" id="ask-engine">
+            <option value="vanna">Vanna</option>
+            <option value="langchain">LangChain</option>
+          </select>
+          <button class="btn btn-primary" id="btn-ask" onclick="doAsk()">▶ 生成 SQL</button>
+          <button class="btn btn-secondary" id="btn-exec" onclick="doExec()" disabled>⚡ 执行</button>
+        </div>
+      </div>
+      <div class="suggested-qs" id="suggested-qs">
+        <span style="font-size:12px;color:var(--text3);margin-right:4px">示例：</span>
+      </div>
+    </div>
+
+    <!-- 主体（链路 + 结果） -->
+    <div class="query-body">
+
+      <!-- 左：调用链路 -->
+      <div class="chain-panel">
+        <div class="panel-header">
+          <span class="panel-title">📡 调用链路</span>
+          <div class="trace-meta">
+            <span id="trace-id-display"></span>
+            <span id="trace-time-display"></span>
+          </div>
+        </div>
+        <div class="chain-body" id="chain-body">
+          <div class="empty-state">
+            <div class="empty-icon">⚡</div>
+            <div class="empty-text">发起问题后<br>调用链路将实时展示在此</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：SQL + 结果 -->
+      <div class="result-panel">
+        <div class="result-body" id="result-body">
+          <div class="empty-state" id="result-empty">
+            <div class="empty-icon">🗄️</div>
+            <div class="empty-text">等待生成 SQL…</div>
+          </div>
+
+          <!-- SQL 卡片（隐藏） -->
+          <div class="sql-card" id="sql-card" style="display:none">
+            <div class="sql-card-header">
+              <span class="sql-card-title">📝 生成的 SQL</span>
+              <div class="sql-actions">
+                <button class="btn btn-sm btn-secondary" onclick="copySQL()">📋 复制</button>
+                <button class="btn btn-sm btn-primary" id="btn-exec2" onclick="doExec()">⚡ 执行</button>
+              </div>
+            </div>
+            <pre><code class="language-sql" id="sql-code"></code></pre>
+            <div class="feedback-row">
+              <span class="feedback-label">结果反馈：</span>
+              <button class="btn btn-sm btn-success" onclick="sendFeedback(true)">👍 正确，加入知识库</button>
+              <button class="btn btn-sm btn-secondary" onclick="showCorrectForm()">✏️ 有误，修正</button>
+            </div>
+            <!-- 修正表单 -->
+            <div id="correct-form" style="display:none;padding:12px 16px;border-top:1px solid var(--border)">
+              <div class="form-group" style="margin-bottom:8px">
+                <label class="form-label">修正后的 SQL</label>
+                <textarea class="form-input form-textarea" id="corrected-sql" style="min-height:80px;font-family:var(--mono)"></textarea>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="sendFeedback(false)">保存修正</button>
+            </div>
+          </div>
+
+          <!-- 执行结果（隐藏） -->
+          <div id="exec-result" style="display:none">
+            <div class="result-table-wrap">
+              <div class="result-table-header">
+                <span class="panel-title">📊 执行结果</span>
+                <span id="exec-stats" style="font-size:12px;color:var(--text3)"></span>
+              </div>
+              <div class="table-scroll">
+                <table id="result-table">
+                  <thead id="result-thead"></thead>
+                  <tbody id="result-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 训练管理 ══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-manage">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+    <div class="tabs-bar">
+      <button class="tab-btn active" onclick="showTab('data')" id="tab-data">训练数据</button>
+      <button class="tab-btn" onclick="showTab('add')" id="tab-add">添加数据</button>
+      <button class="tab-btn" onclick="showTab('prompt')" id="tab-prompt">System Prompt</button>
+      <button class="tab-btn" onclick="showTab('meta')" id="tab-meta">元数据</button>
+      <button class="tab-btn" onclick="showTab('mine')" id="tab-mine">⛏ 挖掘</button>
+    </div>
+    <div class="tab-content">
+
+      <!-- 训练数据列表 -->
+      <div class="tab-pane active" id="pane-data">
+        <div class="filter-bar">
+          <select class="form-input" id="filter-type" onchange="loadTrainingData()"
+            style="width:120px">
+            <option value="">全部类型</option>
+            <option value="sql">SQL 问答</option>
+            <option value="ddl">DDL</option>
+            <option value="doc">文档</option>
+          </select>
+          <input class="form-input" id="filter-search" placeholder="搜索问题/内容…"
+            oninput="filterTable()" style="width:220px">
+          <button class="btn btn-secondary" onclick="loadTrainingData()">🔄 刷新</button>
+          <span id="data-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
+        </div>
+        <div class="result-table-wrap">
+          <div class="table-scroll" style="max-height:calc(100vh - 260px)">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th><th>类型</th><th>来源</th><th>问题</th>
+                  <th>内容预览</th><th>命中</th><th>质量</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="training-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 添加数据 -->
+      <div class="tab-pane" id="pane-add">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+
+          <!-- Q&A -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">💬 添加 Q&A 对</span></div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">自然语言问题</label>
+                <textarea class="form-input form-textarea" id="add-q" placeholder="上个月各大区销售额？"></textarea>
+              </div>
+              <div class="form-group" style="margin-bottom:12px">
+                <label class="form-label">对应 SQL</label>
+                <textarea class="form-input form-textarea" id="add-sql" placeholder="SELECT ..." style="min-height:100px;font-family:var(--mono)"></textarea>
+              </div>
+              <button class="btn btn-primary" onclick="addQA()" style="width:100%">✅ 添加</button>
+            </div>
+          </div>
+
+          <!-- DDL -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">📐 添加 DDL</span></div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:12px">
+                <label class="form-label">DDL 定义</label>
+                <textarea class="form-input form-textarea" id="add-ddl" placeholder="CREATE TABLE ..." style="min-height:180px;font-family:var(--mono)"></textarea>
+              </div>
+              <button class="btn btn-primary" onclick="addDDL()" style="width:100%">✅ 添加 DDL</button>
+            </div>
+          </div>
+
+          <!-- Doc -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">📄 添加业务文档</span></div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:12px">
+                <label class="form-label">业务说明/注释</label>
+                <textarea class="form-input form-textarea" id="add-doc" placeholder="dws_user_trade_daily 表记录用户每日交易聚合..." style="min-height:180px"></textarea>
+              </div>
+              <button class="btn btn-primary" onclick="addDoc()" style="width:100%">✅ 添加文档</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- System Prompt -->
+      <div class="tab-pane" id="pane-prompt">
+        <div style="max-width:980px">
+          <div class="card">
+            <div class="card-header"><span class="card-title">🧠 System Prompt 维护</span></div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:12px">
+                <label class="form-label">当前 System Prompt</label>
+                <textarea class="form-input form-textarea" id="system-prompt-text"
+                  style="min-height:260px;font-family:var(--mono)"
+                  placeholder="例如：你是一个精通 Doris SQL 的数据分析助手，优先复用召回样例，严格只输出 SQL。"></textarea>
+              </div>
+              <div style="display:flex;gap:10px;align-items:center">
+                <button class="btn btn-primary" onclick="saveSystemPrompt()">💾 保存 System Prompt</button>
+                <button class="btn btn-secondary" onclick="loadSystemPrompt()">🔄 重新加载</button>
+                <span id="system-prompt-msg" style="font-size:12px;color:var(--text3)"></span>
+              </div>
+              <hr class="divider">
+              <div style="font-size:12.5px;line-height:1.8;color:var(--text2)">
+                <p>这段内容会作为 <code>initial_prompt</code> 传给 Vanna 的 <code>get_sql_prompt()</code>。</p>
+                <p>保存后会重置服务连接，下一次问答立即生效。</p>
+                <p>你可以在左侧调用链的 <code>④ 组装 Prompt</code> 里查看最终拼装结果。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 元数据 -->
+      <div class="tab-pane" id="pane-meta">
+        <div class="filter-bar">
+          <button class="btn btn-primary" onclick="syncMeta()">🔄 同步元数据到知识库</button>
+          <button class="btn btn-secondary" onclick="loadMetaTables()">查看表列表</button>
+          <input class="form-input" id="meta-search" placeholder="搜索表名…"
+            oninput="filterMeta()" style="width:180px;margin-left:auto">
+        </div>
+        <div id="meta-container">
+          <div class="empty-state"><div class="empty-icon">🗄️</div><div class="empty-text">点击「查看表列表」加载</div></div>
+        </div>
+      </div>
+
+      <!-- 挖掘 -->
+      <div class="tab-pane" id="pane-mine">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:700px">
+          <div class="card">
+            <div class="card-header"><span class="card-title">⛏ 挖掘 audit_log</span></div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">最大查询时间 (ms)</label>
+                <input class="form-input" type="number" id="mine-ms" value="30000">
+              </div>
+              <div class="form-group" style="margin-bottom:12px">
+                <label class="form-label">最多挖掘条数</label>
+                <input class="form-input" type="number" id="mine-limit" value="500">
+              </div>
+              <button class="btn btn-primary" onclick="doMine()" id="btn-mine" style="width:100%">🚀 开始挖掘</button>
+              <div id="mine-result" style="margin-top:12px;font-size:12px;color:var(--text2)"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><span class="card-title">ℹ️ 说明</span></div>
+            <div class="card-body" style="font-size:12.5px;line-height:1.8;color:var(--text2)">
+              <p>挖掘流程：</p>
+              <p>1. 从 <code>__internal_schema.audit_log</code> 提取成功的 SELECT 查询</p>
+              <p>2. 质量过滤：执行成功 · 时间合理 · 有返回结果 · 非系统查询</p>
+              <p>3. 去重处理</p>
+              <p>4. 用 Qwen 反向生成对应的「中文问题」</p>
+              <p>5. 写入向量知识库</p>
+              <hr class="divider" style="margin:8px 0">
+              <p style="color:var(--yellow)">⚠️ 开启 Qwen 反推问题较慢，每条约 1~3 秒</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 调用日志 ══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-log">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+    <div class="panel-header" style="padding:12px 16px;flex-shrink:0">
+      <span class="panel-title">📋 调用日志</span>
+      <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
+        <span id="log-stats" style="font-size:12px;color:var(--text3)"></span>
+        <button class="btn btn-secondary btn-sm" onclick="loadLogs()">🔄 刷新</button>
+      </div>
+    </div>
+    <div class="log-body">
+      <div class="log-list" id="log-list"></div>
+      <div class="log-detail" id="log-detail">
+        <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">点击左侧记录查看详情</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 配置 ══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-config">
+  <div style="max-width:640px;width:100%;padding:24px">
+    <h2 style="font-size:16px;font-weight:700;margin-bottom:20px">🔧 连接与模型配置</h2>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">🗄️ Doris 连接</span></div>
+      <div class="card-body">
+        <div class="form-grid" style="margin-bottom:12px">
+          <div class="form-group">
+            <label class="form-label">Host</label>
+            <input class="form-input" id="cfg-host" value="10.26.20.3">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Port</label>
+            <input class="form-input" id="cfg-port" type="number" value="19030">
+          </div>
+          <div class="form-group">
+            <label class="form-label">User</label>
+            <input class="form-input" id="cfg-user" value="root">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input class="form-input" id="cfg-pwd" type="password" placeholder="留空表示无密码">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">业务数据库</label>
+          <input class="form-input" id="cfg-db" value="retail_dw">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">🤖 Qwen 配置</span></div>
+      <div class="card-body">
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">API Key</label>
+          <input class="form-input" id="cfg-key" type="password" placeholder="sk-...">
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">LLM 模型</label>
+            <select class="form-input" id="cfg-model">
+              <option value="qwen-plus">qwen-plus（推荐）</option>
+              <option value="qwen-turbo">qwen-turbo（更快）</option>
+              <option value="qwen-max">qwen-max（更强）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">向量检索条数 (n_results)</label>
+            <input class="form-input" id="cfg-n" type="number" value="5" min="1" max="20">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" onclick="saveConfig()">💾 保存并重置连接</button>
+      <button class="btn btn-secondary" onclick="loadConfig()">🔄 重新加载</button>
+      <button class="btn btn-secondary" onclick="testConn()">🔌 测试连接</button>
+    </div>
+    <div id="cfg-msg" style="margin-top:12px;font-size:13px"></div>
+  </div>
+</div>
+
+</main>
+
+<!-- Prism -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   全局状态 & 工具
+════════════════════════════════════════════════════════════════════════ */
+const API = ''; // 同源，留空即可；若跨域填 http://localhost:8765
+let currentQuestion = '';
+let currentSQL = '';
+let currentSSE = null;
+let currentAskEngine = 'vanna';
+
+const SUGGESTED = [
+  '上个月各地区销售总额排名？',
+  '今天的GMV、订单量、下单人数？',
+  'PLUS会员和普通会员消费对比？',
+  '近7天销量最高的商品Top10？',
+  '昨天各支付渠道的占比？',
+];
+
+function toast(msg, type='success'){
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 3000);
+}
+
+async function apiFetch(path, opts={}){
+  const res = await fetch(API + path, {
+    headers:{'Content-Type':'application/json'},
+    ...opts
+  });
+  if(!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function fmt(n){ return n != null ? Number(n).toLocaleString() : '—'; }
+function esc(s){ return String(s??'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── 导航 ──────────────────────────────────────────────────────────────── */
+function showPage(name){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  document.getElementById('nav-'+name).classList.add('active');
+  if(name==='log') loadLogs();
+  if(name==='config') loadConfig();
+}
+
+function showTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  document.getElementById('pane-'+name).classList.add('active');
+  if(name==='data') loadTrainingData();
+  if(name==='prompt') loadSystemPrompt();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   问数验证 — SSE 调用链
+════════════════════════════════════════════════════════════════════════ */
+function doAsk(){
+  const q = document.getElementById('question').value.trim();
+  if(!q){ toast('请输入问题','error'); return; }
+  currentQuestion = q;
+  currentAskEngine = document.getElementById('ask-engine').value;
+  currentSQL = '';
+
+  // Reset UI
+  resetChain();
+  document.getElementById('sql-card').style.display='none';
+  document.getElementById('exec-result').style.display='none';
+  document.getElementById('result-empty').style.display='block';
+  document.getElementById('result-empty').innerHTML='<div class="empty-icon">⏳</div><div class="empty-text">正在推理…</div>';
+  document.getElementById('btn-exec').disabled=true;
+  document.getElementById('btn-exec2').disabled=true;
+  document.getElementById('trace-id-display').textContent='';
+  document.getElementById('trace-time-display').textContent='';
+
+  // Close previous SSE
+  if(currentSSE){ currentSSE.close(); currentSSE=null; }
+
+  const streamPath = currentAskEngine === 'langchain' ? '/ask-lc/stream' : '/ask/stream';
+  const url = API + streamPath + '?q=' + encodeURIComponent(q);
+  currentSSE = new EventSource(url);
+
+  currentSSE.addEventListener('start', e=>{
+    const d = JSON.parse(e.data);
+    document.getElementById('trace-id-display').textContent = 'ID: '+d.trace_id;
+  });
+
+  currentSSE.addEventListener('step_start', e=>{
+    const d = JSON.parse(e.data);
+    addStepCard(d.name, d.label||d.name, 'running');
+  });
+
+  currentSSE.addEventListener('step_done', e=>{
+    const d = JSON.parse(e.data);
+    updateStepCard(d);
+  });
+
+  currentSSE.addEventListener('final', e=>{
+    const d = JSON.parse(e.data);
+    const trace = d.trace || {};
+    document.getElementById('trace-time-display').textContent =
+      `⏱ ${trace.total_ms?.toFixed(0)||0}ms`;
+    if(d.sql){
+      currentSQL = d.sql;
+      showSQL(d.sql);
+    } else if(d.error){
+      showError(d.error);
+    }
+    currentSSE.close(); currentSSE=null;
+  });
+
+  currentSSE.addEventListener('error', e=>{
+    console.warn('SSE error', e);
+    if(currentSSE) currentSSE.close();
+  });
+}
+
+function resetChain(){
+  document.getElementById('chain-body').innerHTML =
+    '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">⏳ 推理中…</div>';
+}
+
+const STEP_LABELS = {
+  generate_embedding: '① 生成 Embedding 向量',
+  vector_search_sql:  '② 向量检索相似 SQL',
+  vector_search_ddl:  '③ 向量检索相关 DDL',
+  build_prompt:       '④ 组装 Prompt',
+  llm_generate:       '⑤ LLM 推理生成 SQL',
+  extract_sql:        '⑥ 提取 SQL',
+  router_intent:      '① 意图解析与标准化',
+  multi_recall:       '② 多路召回与融合',
+  sql_guard:          '⑤ SQL Guard / EXPLAIN',
+};
+
+function addStepCard(name, label, status){
+  const container = document.getElementById('chain-body');
+  if(container.querySelector('.empty-state')||container.childElementCount===1&&container.firstChild.tagName==='DIV'&&!container.firstChild.className.includes('step-card')){
+    container.innerHTML='';
+  }
+  const displayLabel = STEP_LABELS[name] || label;
+  const card = document.createElement('div');
+  card.className = `step-card ${status}`;
+  card.id = `step-${name}`;
+  card.innerHTML = `
+    <div class="step-header" onclick="toggleStepDetail('${name}')">
+      <div class="step-icon ${status}">${status==='running'?'↻':'…'}</div>
+      <span class="step-name">${esc(displayLabel)}</span>
+      <span class="step-dur" id="dur-${name}"></span>
+    </div>
+    <div class="step-detail" id="detail-${name}"></div>
+  `;
+  container.appendChild(card);
+  container.scrollTop = container.scrollHeight;
+}
+
+function updateStepCard(step){
+  const name = step.name;
+  let card = document.getElementById('step-'+name);
+  if(!card){ addStepCard(name, STEP_LABELS[name]||name, step.status); card=document.getElementById('step-'+name); }
+
+  card.className = `step-card ${step.status}`;
+  const iconEl = card.querySelector('.step-icon');
+  iconEl.className = `step-icon ${step.status}`;
+  const icons = {ok:'✓', error:'✗', cached:'○', running:'↻'};
+  iconEl.textContent = icons[step.status]||'?';
+
+  const durEl = document.getElementById('dur-'+name);
+  if(durEl && step.duration_ms!=null) durEl.textContent = step.duration_ms.toFixed(0)+'ms';
+
+  // Badge (note)
+  const header = card.querySelector('.step-header');
+  const existBadge = header.querySelector('.step-badge');
+  if(existBadge) existBadge.remove();
+  if(step.note){
+    const badge = document.createElement('span');
+    const cls = step.note==='CACHED'?'cached':step.note.includes('gemini')?'model':'fresh';
+    badge.className = `step-badge ${cls}`;
+    badge.textContent = step.note;
+    header.insertBefore(badge, durEl);
+  }
+
+  // Detail
+  const detail = document.getElementById('detail-'+name);
+  if(detail && step.outputs){
+    let html = '';
+    const out = step.outputs;
+    const formatters = {
+      generate_embedding: ()=>`
+        <div class="detail-row"><span class="detail-label">向量维度</span><span class="detail-val highlight">${out.dims}</span></div>`,
+      vector_search_sql: ()=>`
+        <div class="detail-row"><span class="detail-label">找到</span><span class="detail-val highlight">${out.found} 条</span></div>
+        ${(out.top_questions||[]).map((q,i)=>`
+          <div class="detail-row"><span class="detail-label">Top${i+1}</span>
+          <span class="detail-val">${esc(q)} <span style="color:var(--text3)">(${out.top_scores?.[i]??''})</span></span></div>`).join('')}`,
+      vector_search_ddl: ()=>`
+        <div class="detail-row"><span class="detail-label">找到</span><span class="detail-val highlight">${out.found} 张表</span></div>
+        ${(out.tables||[]).map(t=>`<div class="detail-row"><span class="detail-label"></span><span class="detail-val">${esc(t)}</span></div>`).join('')}`,
+      router_intent: ()=>`
+        <div class="detail-row"><span class="detail-label">标准化</span><span class="detail-val">${esc(out.normalized_query||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">意图</span><span class="detail-val highlight">${esc(out.intent||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">实体</span><span class="detail-val">${esc(out.entity||'')}</span></div>`,
+      multi_recall: ()=>`
+        <div class="detail-row"><span class="detail-label">SQL示例</span><span class="detail-val">${out.sql_example_count||0} 条</span></div>
+        <div class="detail-row"><span class="detail-label">DDL</span><span class="detail-val">${out.ddl_count||0} 张</span></div>
+        <div class="detail-row"><span class="detail-label">文档</span><span class="detail-val">${out.doc_count||0} 条</span></div>
+        <div class="detail-row"><span class="detail-label">audit</span><span class="detail-val">${out.audit_count||0} 条</span></div>
+        <div class="detail-subtitle">Skill 输出</div>
+        <div class="detail-block">${esc(JSON.stringify(out.skill_outputs||{}, null, 2))}</div>`,
+      build_prompt: ()=>`
+        <div class="detail-row"><span class="detail-label">Prompt</span><span class="detail-val highlight">${fmt(out.prompt_len)} 字符</span></div>
+        <div class="detail-row"><span class="detail-label">SQL示例</span><span class="detail-val">${out.sim_sql_count} 条</span></div>
+        <div class="detail-row"><span class="detail-label">DDL</span><span class="detail-val">${out.ddl_count} 张</span></div>
+        <div class="detail-row"><span class="detail-label">文档</span><span class="detail-val">${out.doc_count} 条</span></div>
+        ${(out.question_sql_examples||[]).length?`
+          <div class="detail-subtitle">相似 SQL 示例</div>
+          ${(out.question_sql_examples||[]).map((item,i)=>`
+            <div class="detail-row"><span class="detail-label">Q${i+1}</span><span class="detail-val">${esc(item.question||'')}</span></div>
+            <div class="detail-block">${esc(item.sql||'')}</div>
+          `).join('')}
+        `:''}
+        ${(out.ddl_list||[]).length?`
+          <div class="detail-subtitle">召回 DDL</div>
+          ${(out.ddl_list||[]).map((item,i)=>`
+            <div class="detail-row"><span class="detail-label">DDL${i+1}</span></div>
+            <div class="detail-block">${esc(item)}</div>
+          `).join('')}
+        `:''}
+        ${(out.doc_list||[]).length?`
+          <div class="detail-subtitle">召回文档</div>
+          ${(out.doc_list||[]).map((item,i)=>`
+            <div class="detail-row"><span class="detail-label">DOC${i+1}</span></div>
+            <div class="detail-block">${esc(item)}</div>
+          `).join('')}
+        `:''}
+        <div class="detail-subtitle">完整 Prompt</div>
+        <div class="detail-block">${esc(out.prompt_full||'')}</div>`,
+      llm_generate: ()=>`
+        <div class="detail-row"><span class="detail-label">模型</span><span class="detail-val highlight">${esc(out.preview?'':step.note||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">输出</span><span class="detail-val">${fmt(out.response_len)} 字符</span></div>`,
+      sql_guard: ()=>`
+        <div class="detail-row"><span class="detail-label">校验</span><span class="detail-val highlight">${out.ok?'通过':'失败'}</span></div>
+        <div class="detail-row"><span class="detail-label">结果</span><span class="detail-val">${esc(out.reason||'')}</span></div>`,
+      extract_sql: ()=>`
+        <div class="detail-row"><span class="detail-label">提取</span><span class="detail-val highlight">${out.sql?'成功':'失败'}</span></div>`,
+    };
+    html = (formatters[name]||(() => JSON.stringify(out,null,2).split('\n').map(l=>`<div class="detail-row"><span class="detail-val">${esc(l)}</span></div>`).join('')))();
+    if(step.error) html += `<div class="detail-row"><span class="detail-label" style="color:var(--red)">错误</span><span class="detail-val" style="color:var(--red)">${esc(step.error)}</span></div>`;
+    detail.innerHTML = html;
+
+    // auto-expand errors
+    if(step.status==='error') detail.classList.add('open');
+  }
+}
+
+function toggleStepDetail(name){
+  const d = document.getElementById('detail-'+name);
+  if(d) d.classList.toggle('open');
+}
+
+function showSQL(sql){
+  currentSQL = sql;
+  document.getElementById('result-empty').style.display='none';
+  const card = document.getElementById('sql-card');
+  card.style.display='block';
+  const codeEl = document.getElementById('sql-code');
+  codeEl.textContent = sql;
+  Prism.highlightElement(codeEl);
+  document.getElementById('correct-form').style.display='none';
+  document.getElementById('corrected-sql').value = sql;
+  document.getElementById('btn-exec').disabled=false;
+  document.getElementById('btn-exec2').disabled=false;
+}
+
+function showError(msg){
+  document.getElementById('result-empty').style.display='block';
+  document.getElementById('result-empty').innerHTML = `<div class="empty-icon">❌</div><div class="empty-text" style="color:var(--red)">${esc(msg)}</div>`;
+}
+
+function copySQL(){
+  navigator.clipboard.writeText(currentSQL).then(()=>toast('已复制到剪贴板'));
+}
+
+function showCorrectForm(){
+  const f = document.getElementById('correct-form');
+  f.style.display = f.style.display==='none'?'block':'none';
+}
+
+async function doExec(){
+  if(!currentSQL){ toast('还没有 SQL','error'); return; }
+  document.getElementById('exec-result').style.display='block';
+  document.getElementById('result-tbody').innerHTML=
+    '<tr><td colspan="99" style="text-align:center;padding:20px;color:var(--text3)"><span class="spinner"></span> 执行中…</td></tr>';
+  try{
+    const data = await apiFetch('/execute',{method:'POST',body:JSON.stringify({sql:currentSQL})});
+    renderTable(data);
+    document.getElementById('exec-stats').textContent = `返回 ${data.total} 行（最多显示 200）`;
+  }catch(e){ toast('执行失败: '+e.message,'error'); }
+}
+
+function renderTable(data){
+  const thead = document.getElementById('result-thead');
+  const tbody = document.getElementById('result-tbody');
+  thead.innerHTML = '<tr>'+data.columns.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';
+  tbody.innerHTML = data.rows.map(row=>
+    '<tr>'+row.map(v=>`<td title="${esc(v)}">${esc(v)}</td>`).join('')+'</tr>'
+  ).join('');
+}
+
+async function sendFeedback(isCorrect){
+  const corrected = isCorrect ? null : document.getElementById('corrected-sql').value;
+  try{
+    await apiFetch('/feedback',{method:'POST',body:JSON.stringify({
+      question:currentQuestion, sql:currentSQL,
+      is_correct:isCorrect, corrected_sql:corrected
+    })});
+    toast(isCorrect?'👍 已加入知识库！':'✏️ 修正版已保存！');
+    if(!isCorrect) document.getElementById('correct-form').style.display='none';
+  }catch(e){ toast('反馈失败: '+e.message,'error'); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   训练数据管理
+════════════════════════════════════════════════════════════════════════ */
+let trainingData = [];
+
+async function loadTrainingData(){
+  const type = document.getElementById('filter-type').value;
+  try{
+    const res = await apiFetch('/training-data?limit=300'+(type?'&content_type='+type:''));
+    trainingData = res.data||[];
+    document.getElementById('data-count').textContent = `共 ${trainingData.length} 条`;
+    renderTrainingTable(trainingData);
+  }catch(e){ toast('加载失败: '+e.message,'error'); }
+}
+
+function filterTable(){
+  const q = document.getElementById('filter-search').value.toLowerCase();
+  const filtered = trainingData.filter(r=>
+    (r.question||'').toLowerCase().includes(q) ||
+    (r.content_preview||'').toLowerCase().includes(q)
+  );
+  renderTrainingTable(filtered);
+}
+
+function renderTrainingTable(data){
+  const typeColors = {sql:'var(--blue)',ddl:'var(--green)',doc:'var(--orange)'};
+  document.getElementById('training-tbody').innerHTML = data.map(r=>`
+    <tr>
+      <td style="color:var(--text3);font-size:11px">${r.id}</td>
+      <td><span class="tag" style="color:${typeColors[r.content_type]||'var(--text2)'}">${r.content_type}</span></td>
+      <td><span class="tag">${r.source||'—'}</span></td>
+      <td style="max-width:200px;color:var(--text)">${esc(r.question||'—')}</td>
+      <td style="max-width:260px;color:var(--text2);font-family:var(--mono);font-size:11.5px">${esc(r.content_preview||'')}</td>
+      <td style="text-align:center">${r.use_count??0}</td>
+      <td>${r.quality_score!=null?Number(r.quality_score).toFixed(1):'—'}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="deleteTraining('${r.id}')">🗑</button></td>
+    </tr>
+  `).join('');
+}
+
+async function deleteTraining(id){
+  if(!confirm('确认删除 ID='+id+'？')) return;
+  try{
+    await apiFetch('/training-data/'+id,{method:'DELETE'});
+    toast('已删除');
+    loadTrainingData();
+  }catch(e){ toast('删除失败: '+e.message,'error'); }
+}
+
+async function addQA(){
+  const q=document.getElementById('add-q').value.trim();
+  const sql=document.getElementById('add-sql').value.trim();
+  if(!q||!sql){toast('问题和SQL不能为空','error');return;}
+  try{
+    await apiFetch('/training-data/sql',{method:'POST',body:JSON.stringify({question:q,sql,source:'manual'})});
+    toast('Q&A 已添加！');
+    document.getElementById('add-q').value='';
+    document.getElementById('add-sql').value='';
+  }catch(e){toast('添加失败: '+e.message,'error');}
+}
+
+async function addDDL(){
+  const ddl=document.getElementById('add-ddl').value.trim();
+  if(!ddl){toast('DDL不能为空','error');return;}
+  try{
+    await apiFetch('/training-data/ddl',{method:'POST',body:JSON.stringify({ddl,source:'manual'})});
+    toast('DDL 已添加！');
+    document.getElementById('add-ddl').value='';
+  }catch(e){toast('添加失败: '+e.message,'error');}
+}
+
+async function addDoc(){
+  const doc=document.getElementById('add-doc').value.trim();
+  if(!doc){toast('文档不能为空','error');return;}
+  try{
+    await apiFetch('/training-data/doc',{method:'POST',body:JSON.stringify({documentation:doc,source:'manual'})});
+    toast('文档已添加！');
+    document.getElementById('add-doc').value='';
+  }catch(e){toast('添加失败: '+e.message,'error');}
+}
+
+async function loadSystemPrompt(){
+  const msg = document.getElementById('system-prompt-msg');
+  try{
+    const res = await apiFetch('/system-prompt');
+    document.getElementById('system-prompt-text').value = res.initial_prompt || '';
+    msg.textContent = '已加载';
+  }catch(e){
+    msg.textContent = '';
+    toast('加载 System Prompt 失败: '+e.message,'error');
+  }
+}
+
+async function saveSystemPrompt(){
+  const msg = document.getElementById('system-prompt-msg');
+  const initial_prompt = document.getElementById('system-prompt-text').value;
+  try{
+    const res = await apiFetch('/system-prompt',{
+      method:'POST',
+      body:JSON.stringify({initial_prompt})
+    });
+    msg.innerHTML = `<span style="color:var(--green)">${esc(res.message)}</span>`;
+    toast('System Prompt 已保存');
+  }catch(e){
+    msg.textContent = '';
+    toast('保存 System Prompt 失败: '+e.message,'error');
+  }
+}
+
+/* ── 元数据 ──────────────────────────────────────────────────────────────── */
+let metaTables=[];
+
+async function loadMetaTables(){
+  try{
+    const res=await apiFetch('/metadata/tables');
+    metaTables=res.tables||[];
+    renderMetaTables(metaTables);
+  }catch(e){toast('加载元数据失败: '+e.message,'error');}
+}
+
+function filterMeta(){
+  const q=document.getElementById('meta-search').value.toLowerCase();
+  renderMetaTables(metaTables.filter(t=>(t.table_name||'').toLowerCase().includes(q)||(t.comment||'').toLowerCase().includes(q)));
+}
+
+function renderMetaTables(tables){
+  document.getElementById('meta-container').innerHTML = `
+    <div class="result-table-wrap">
+      <div class="table-scroll" style="max-height:calc(100vh - 300px)">
+        <table>
+          <thead><tr><th>表名</th><th>注释</th><th>引擎</th><th>预估行数</th><th>字段数</th><th>操作</th></tr></thead>
+          <tbody>${tables.map(t=>`
+            <tr>
+              <td><code>${esc(t.table_name)}</code></td>
+              <td>${esc(t.comment||'')}</td>
+              <td><span class="tag">${t.engine||''}</span></td>
+              <td>${fmt(t.rows)}</td>
+              <td>${t.col_count||'—'}</td>
+              <td><button class="btn btn-sm btn-secondary" onclick="showTableDetail('${esc(t.table_name)}')">详情</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function showTableDetail(name){
+  try{
+    const m=await apiFetch('/metadata/tables/'+encodeURIComponent(name));
+    const cols=m.columns||[];
+    const html=`
+      <div class="card" style="margin-top:12px">
+        <div class="card-header">
+          <span class="card-title">${esc(m.table_name)}</span>
+          <span style="color:var(--text3);font-size:12px;margin-left:8px">${esc(m.comment)}</span>
+        </div>
+        <div class="card-body">
+          <details style="margin-bottom:12px">
+            <summary style="cursor:pointer;color:var(--blue);font-size:13px">📐 DDL 预览</summary>
+            <pre style="background:var(--bg);padding:12px;border-radius:6px;font-size:12px;overflow:auto;margin-top:8px"><code class="language-sql">${esc(m.ddl)}</code></pre>
+          </details>
+          <table style="width:100%">
+            <thead><tr><th>字段名</th><th>类型</th><th>可空</th><th>注释</th></tr></thead>
+            <tbody>${cols.map(c=>`
+              <tr>
+                <td><code>${esc(c.name)}</code></td>
+                <td><span class="tag">${esc(c.type)}</span></td>
+                <td style="color:${c.nullable==='YES'?'var(--text3)':'var(--green)'}">${c.nullable}</td>
+                <td style="color:var(--text2)">${esc(c.comment||'')}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    const existing=document.getElementById('meta-detail-card');
+    if(existing) existing.remove();
+    const div=document.createElement('div');
+    div.id='meta-detail-card';
+    div.innerHTML=html;
+    document.getElementById('meta-container').appendChild(div);
+    Prism.highlightAll();
+    div.scrollIntoView({behavior:'smooth'});
+  }catch(e){toast('获取表详情失败: '+e.message,'error');}
+}
+
+async function syncMeta(){
+  const btn=event.target;
+  btn.disabled=true; btn.textContent='⏳ 同步中…';
+  try{
+    const res=await apiFetch('/metadata/sync',{method:'POST'});
+    toast(`✅ 同步完成，共 ${res.tables_synced} 张表`);
+    loadMetaTables();
+  }catch(e){toast('同步失败: '+e.message,'error');}
+  finally{btn.disabled=false;btn.textContent='🔄 同步元数据到知识库';}
+}
+
+/* ── 挖掘 ──────────────────────────────────────────────────────────────────── */
+async function doMine(){
+  const btn=document.getElementById('btn-mine');
+  const ms=parseInt(document.getElementById('mine-ms').value)||30000;
+  const limit=parseInt(document.getElementById('mine-limit').value)||500;
+  btn.disabled=true; btn.textContent='⏳ 挖掘中…';
+  document.getElementById('mine-result').innerHTML='<span class="spinner"></span> 正在执行，请稍候…';
+  try{
+    const res=await apiFetch(`/audit/mine?limit=${limit}&max_ms=${ms}`,{method:'POST'});
+    document.getElementById('mine-result').innerHTML=`
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
+        ${Object.entries(res).map(([k,v])=>`
+          <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;border:1px solid var(--border)">
+            <div style="font-size:16px;font-weight:700;color:var(--text)">${v}</div>
+            <div style="font-size:11px;color:var(--text3)">${k}</div>
+          </div>`).join('')}
+      </div>`;
+  }catch(e){
+    document.getElementById('mine-result').innerHTML=`<span style="color:var(--red)">失败: ${esc(e.message)}</span>`;
+  }
+  btn.disabled=false; btn.textContent='🚀 开始挖掘';
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   调用日志
+════════════════════════════════════════════════════════════════════════ */
+async function loadLogs(){
+  try{
+    const res=await apiFetch('/traces?n=100');
+    const traces=res.traces||[];
+    const stats=res.stats||{};
+    document.getElementById('log-stats').textContent =
+      `共${stats.total||0}条 · 成功率${stats.success_rate||'—'} · 均${stats.avg_ms||0}ms`;
+    renderLogList(traces);
+  }catch(e){document.getElementById('log-list').innerHTML=`<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;}
+}
+
+function renderLogList(traces){
+  const listEl=document.getElementById('log-list');
+  listEl.innerHTML=traces.map(t=>`
+    <div class="log-item" onclick="showLogDetail('${t.trace_id}',this)">
+      <div class="log-item-top">
+        <span class="log-status ${t.status}">${{ok:'✓ 成功',error:'✗ 失败',running:'⏳ 运行中'}[t.status]||t.status}</span>
+        <span class="log-meta">${t.created_at} · ${(t.total_ms||0).toFixed(0)}ms</span>
+      </div>
+      <div class="log-q">${esc(t.question)}</div>
+    </div>
+  `).join('') || '<div style="padding:24px;text-align:center;color:var(--text3)">暂无记录</div>';
+}
+
+function showLogDetail(traceId, el){
+  document.querySelectorAll('.log-item').forEach(i=>i.classList.remove('selected'));
+  if(el) el.classList.add('selected');
+  apiFetch('/traces/'+traceId).then(t=>{
+    const steps=t.steps||[];
+    document.getElementById('log-detail').innerHTML=`
+      <div style="margin-bottom:16px">
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+          <span class="log-status ${t.status}">${{ok:'✓ 成功',error:'✗ 失败'}[t.status]||t.status}</span>
+          <span style="font-size:12px;color:var(--text3)">Trace: <code>${t.trace_id}</code></span>
+          <span style="font-size:12px;color:var(--text3)">${t.created_at}</span>
+          <span style="font-size:12px;color:var(--blue)">${(t.total_ms||0).toFixed(0)}ms</span>
+          <span style="font-size:12px;color:var(--text2)">${t.model_used||''}</span>
+        </div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">${esc(t.question)}</div>
+        ${t.error?`<div style="color:var(--red);font-size:13px">错误: ${esc(t.error)}</div>`:''}
+      </div>
+      ${steps.map((s,i)=>`
+        <div class="step-card ${s.status}" style="margin-bottom:8px">
+          <div class="step-header" style="cursor:default">
+            <div class="step-icon ${s.status}">${{ok:'✓',error:'✗',running:'↻',cached:'○'}[s.status]||'?'}</div>
+            <span class="step-name">${esc(STEP_LABELS[s.name]||s.name)}</span>
+            ${s.note?`<span class="step-badge ${s.note==='CACHED'?'cached':'model'}">${esc(s.note)}</span>`:''}
+            <span class="step-dur">${(s.duration_ms||0).toFixed(0)}ms</span>
+          </div>
+          ${Object.keys(s.outputs||{}).length?`
+          <div class="step-detail open">
+            ${Object.entries(s.outputs).map(([k,v])=>`
+              <div class="detail-row">
+                <span class="detail-label">${esc(k)}</span>
+                <span class="detail-val">${esc(Array.isArray(v)?v.join(' · '):String(v))}</span>
+              </div>`).join('')}
+          </div>`:''}
+        </div>`).join('')}
+      ${t.final_sql?`
+        <div style="margin-top:16px">
+          <div style="font-size:12px;color:var(--text2);margin-bottom:6px">生成的 SQL</div>
+          <pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:12px;overflow:auto"><code class="language-sql">${esc(t.final_sql)}</code></pre>
+        </div>`:''}
+    `;
+    Prism.highlightAll();
+  }).catch(e=>{ document.getElementById('log-detail').innerHTML=`<div style="color:var(--red)">${esc(e.message)}</div>`; });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   配置
+════════════════════════════════════════════════════════════════════════ */
+async function loadConfig(){
+  try{
+    const c=await apiFetch('/config');
+    document.getElementById('cfg-host').value=c.host||'';
+    document.getElementById('cfg-port').value=c.port||19030;
+    document.getElementById('cfg-user').value=c.user||'';
+    document.getElementById('cfg-db').value=c.database||'';
+    document.getElementById('cfg-key').value='';
+    document.getElementById('cfg-key').placeholder=c.qwen_api_key_masked||'sk-...';
+    document.getElementById('cfg-model').value=c.model||'qwen-plus';
+    document.getElementById('cfg-n').value=c.n_results||5;
+    document.getElementById('db-info').textContent=`${c.database} @ ${c.host}`;
+  }catch(e){ console.warn('loadConfig failed',e); }
+}
+
+async function saveConfig(){
+  const body={
+    host:document.getElementById('cfg-host').value,
+    port:parseInt(document.getElementById('cfg-port').value),
+    user:document.getElementById('cfg-user').value,
+    password:document.getElementById('cfg-pwd').value,
+    database:document.getElementById('cfg-db').value,
+    qwen_api_key:document.getElementById('cfg-key').value,
+    model:document.getElementById('cfg-model').value,
+    n_results:parseInt(document.getElementById('cfg-n').value),
+  };
+  try{
+    const res=await apiFetch('/config',{method:'POST',body:JSON.stringify(body)});
+    toast('✅ 配置已保存');
+    document.getElementById('cfg-msg').innerHTML=`<span style="color:var(--green)">${res.message}</span>`;
+    document.getElementById('db-info').textContent=`${body.database} @ ${body.host}`;
+  }catch(e){ toast('保存失败: '+e.message,'error'); }
+}
+
+async function testConn(){
+  const msg=document.getElementById('cfg-msg');
+  msg.innerHTML='<span class="spinner"></span> 测试中…';
+  try{
+    const res=await apiFetch('/health');
+    const ok=res.doris==='ok';
+    msg.innerHTML=`<span style="color:${ok?'var(--green)':'var(--red)'}">${ok?'✅ Doris 连接正常':'❌ Doris 连接失败'}</span>
+      &nbsp; Qwen缓存:${res.qwen_stats?.cache_size||0}条 命中:${res.qwen_stats?.embed_cache_hit_rate||'N/A'}`;
+    document.getElementById('status-dot').className='status-dot '+(ok?'ok':'err');
+  }catch(e){
+    msg.innerHTML=`<span style="color:var(--red)">❌ 连接异常: ${esc(e.message)}</span>`;
+    document.getElementById('status-dot').className='status-dot err';
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   初始化
+════════════════════════════════════════════════════════════════════════ */
+(async()=>{
+  // 建议问题
+  const sqEl=document.getElementById('suggested-qs');
+  SUGGESTED.forEach(q=>{
+    const chip=document.createElement('span');
+    chip.className='sq-chip';
+    chip.textContent=q;
+    chip.onclick=()=>{ document.getElementById('question').value=q; doAsk(); };
+    sqEl.appendChild(chip);
+  });
+
+  // 健康检查
+  try{
+    const h=await apiFetch('/health');
+    document.getElementById('status-dot').className='status-dot '+(h.doris==='ok'?'ok':'err');
+  }catch(e){ document.getElementById('status-dot').className='status-dot err'; }
+
+  loadTrainingData();
+  loadSystemPrompt();
+})();
+</script>
+</body>
+</html>

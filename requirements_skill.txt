@@ -1,0 +1,23 @@
+# Vanna Skill 额外依赖
+# 在已有 venv 基础上安装：
+# pip install -r requirements_skill.txt
+
+# Web UI
+streamlit>=1.35.0
+
+# API 框架（vanna 已依赖 fastapi + uvicorn，如未自动安装则手动添加）
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
+# SQL 解析（血缘分析）
+sqlparse>=0.5.0
+
+# 重试
+tenacity>=9.0.0
+
+# 其余（venv 中已有）
+# google-generativeai>=0.8.0
+# pymysql>=1.1.0
+# pandas>=2.0.0
+# plotly>=5.0.0
+# pydantic>=2.0.0
