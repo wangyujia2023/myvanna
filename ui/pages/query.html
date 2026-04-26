@@ -1,0 +1,92 @@
+<div class="page active" id="page-query">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+
+    <!-- 输入区 -->
+    <div class="query-top">
+      <div class="query-input-row">
+        <textarea class="q-textarea" id="question" rows="2"
+          placeholder="用自然语言提问，例如：上个月各地区销售总额排名？"
+          onkeydown="if(event.ctrlKey&&event.key==='Enter')doAsk()"></textarea>
+        <div class="query-side">
+          <button class="btn btn-primary" id="btn-ask" onclick="doAsk()">▶ 生成 SQL</button>
+          <button class="btn btn-secondary" id="btn-exec" onclick="doExec()" disabled>⚡ 执行</button>
+        </div>
+      </div>
+      <div class="suggested-qs" id="suggested-qs">
+        <span style="font-size:12px;color:var(--text3);margin-right:4px">示例：</span>
+      </div>
+    </div>
+
+    <!-- 主体（链路 + 结果） -->
+    <div class="query-body">
+
+      <!-- 左：调用链路 -->
+      <div class="chain-panel">
+        <div class="panel-header">
+          <span class="panel-title">📡 调用链路</span>
+          <div class="trace-meta">
+            <span id="trace-id-display"></span>
+            <span id="trace-time-display"></span>
+          </div>
+        </div>
+        <div class="chain-body" id="chain-body">
+          <div class="empty-state">
+            <div class="empty-icon">⚡</div>
+            <div class="empty-text">发起问题后<br>调用链路将实时展示在此</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：SQL + 结果 -->
+      <div class="result-panel">
+        <div class="result-body" id="result-body">
+          <div class="empty-state" id="result-empty">
+            <div class="empty-icon">🗄️</div>
+            <div class="empty-text">等待生成 SQL…</div>
+          </div>
+
+          <!-- SQL 卡片（隐藏） -->
+          <div class="sql-card" id="sql-card" style="display:none">
+            <div class="sql-card-header">
+              <span class="sql-card-title">📝 生成的 SQL</span>
+              <div class="sql-actions">
+                <button class="btn btn-sm btn-secondary" onclick="copySQL()">📋 复制</button>
+                <button class="btn btn-sm btn-primary" id="btn-exec2" onclick="doExec()">⚡ 执行</button>
+              </div>
+            </div>
+            <pre><code class="language-sql" id="sql-code"></code></pre>
+            <div class="feedback-row">
+              <span class="feedback-label">结果反馈：</span>
+              <button class="btn btn-sm btn-success" onclick="sendFeedback(true)">👍 正确，加入知识库</button>
+              <button class="btn btn-sm btn-secondary" onclick="showCorrectForm()">✏️ 有误，修正</button>
+            </div>
+            <!-- 修正表单 -->
+            <div id="correct-form" style="display:none;padding:12px 16px;border-top:1px solid var(--border)">
+              <div class="form-group" style="margin-bottom:8px">
+                <label class="form-label">修正后的 SQL</label>
+                <textarea class="form-input form-textarea" id="corrected-sql" style="min-height:80px;font-family:var(--mono)"></textarea>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="sendFeedback(false)">保存修正</button>
+            </div>
+          </div>
+
+          <!-- 执行结果（隐藏） -->
+          <div id="exec-result" style="display:none">
+            <div class="result-table-wrap">
+              <div class="result-table-header">
+                <span class="panel-title">📊 执行结果</span>
+                <span id="exec-stats" style="font-size:12px;color:var(--text3)"></span>
+              </div>
+              <div class="table-scroll">
+                <table id="result-table">
+                  <thead id="result-thead"></thead>
+                  <tbody id="result-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

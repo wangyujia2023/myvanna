@@ -142,18 +142,32 @@ class AskLCPipeline:
             # embedding_fallback_mode:
             #   "fail"    → Embedding 失败直接抛出，pipeline 终止
             #   "keyword" → 降级为关键词检索，context.embedding 置 None（默认）
-            fallback_mode = self._config.get("embedding_fallback_mode", "keyword")
             query_text = routed["normalized_query"] or question
+            fallback_enabled = bool(self._config.get("langchain_fallback_enabled", False))
+            fallback_mode = "keyword" if fallback_enabled else "fail"
+            logger.info(
+                "[AskLCPipeline] embedding fallback enabled=%s mode=%s query=%s",
+                fallback_enabled,
+                fallback_mode,
+                query_text[:120],
+            )
             try:
                 query_vec = self._llm.get_embedding(query_text)
-                logger.debug(f"[AskLCPipeline] Embedding OK, dims={len(query_vec)}")
+                logger.info("[AskLCPipeline] Embedding OK dims=%s", len(query_vec))
             except Exception as emb_err:
                 if fallback_mode == "fail":
+                    logger.error(
+                        "[AskLCPipeline] Embedding 失败且禁止降级，query=%s err=%s",
+                        query_text[:120],
+                        emb_err,
+                    )
                     raise RuntimeError(
                         f"Embedding 计算失败，pipeline 终止（embedding_fallback_mode=fail）: {emb_err}"
                     ) from emb_err
                 logger.warning(
-                    f"[AskLCPipeline] Embedding 失败，降级关键词检索: {emb_err}"
+                    "[AskLCPipeline] Embedding 失败，降级关键词检索 query=%s err=%s",
+                    query_text[:120],
+                    emb_err,
                 )
                 query_vec = None   # Skills 收到 None → 自动走 _search_by_keyword
 
@@ -172,6 +186,7 @@ class AskLCPipeline:
                     "normalized_query": context.normalized_query,
                     "intent": context.intent,
                     "embedding_mode": "vector" if query_vec is not None else f"keyword({fallback_mode})",
+                    "fallback_enabled": fallback_enabled,
                 },
             )
             recall = self._fusion.run(context)

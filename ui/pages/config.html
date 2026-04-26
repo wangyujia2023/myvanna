@@ -1,0 +1,80 @@
+<div class="page" id="page-config">
+  <div style="max-width:640px;width:100%;padding:24px">
+    <h2 style="font-size:16px;font-weight:700;margin-bottom:20px">🔧 连接与模型配置</h2>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">🗄️ Doris 连接</span></div>
+      <div class="card-body">
+        <div class="form-grid" style="margin-bottom:12px">
+          <div class="form-group">
+            <label class="form-label">Host</label>
+            <input class="form-input" id="cfg-host" value="10.26.20.3">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Port</label>
+            <input class="form-input" id="cfg-port" type="number" value="19030">
+          </div>
+          <div class="form-group">
+            <label class="form-label">User</label>
+            <input class="form-input" id="cfg-user" value="root">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input class="form-input" id="cfg-pwd" type="password" placeholder="留空表示无密码">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">业务数据库</label>
+          <input class="form-input" id="cfg-db" value="retail_dw">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">🤖 Qwen 配置</span></div>
+      <div class="card-body">
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">API Key</label>
+          <input class="form-input" id="cfg-key" type="password" placeholder="sk-...">
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">LLM 模型</label>
+            <select class="form-input" id="cfg-model">
+              <option value="qwen-plus">qwen-plus（推荐）</option>
+              <option value="qwen-turbo">qwen-turbo（更快）</option>
+              <option value="qwen-max">qwen-max（更强）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">向量检索条数 (n_results)</label>
+            <input class="form-input" id="cfg-n" type="number" value="5" min="1" max="20">
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label">LangChain 检索降级开关</label>
+          <label style="display:flex;align-items:center;gap:10px;color:var(--text2);font-size:13px">
+            <input id="cfg-lc-fallback" type="checkbox">
+            允许 Embedding 失败时降级为关键词检索
+          </label>
+          <div class="form-hint">默认关闭。关闭后，LangChain 会严格使用 semantic/vector 路径，Embedding 失败将直接报错，方便调试召回效果。</div>
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label">Semantic 到 LangChain 降级开关</label>
+          <label style="display:flex;align-items:center;gap:10px;color:var(--text2);font-size:13px">
+            <input id="cfg-semantic-fallback" type="checkbox">
+            允许 Semantic coverage 不足时降级到 LangChain
+          </label>
+          <div class="form-hint">默认关闭。关闭后，即使 coverage 偏低也继续走 Semantic 路径，便于调试语义规划效果。</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" onclick="saveConfig()">💾 保存并重置连接</button>
+      <button class="btn btn-secondary" onclick="loadConfig()">🔄 重新加载</button>
+      <button class="btn btn-secondary" onclick="testConn()">🔌 测试连接</button>
+    </div>
+    <div id="cfg-msg" style="margin-top:12px;font-size:13px"></div>
+  </div>
+</div>

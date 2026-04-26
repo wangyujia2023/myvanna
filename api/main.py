@@ -20,6 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from vanna_skill import DorisVanna, tracer, load_config, save_config, AskLCPipeline, DorisClient, PromptStore, LineageManager, invalidate_lineage_cache
+from vanna_skill.pipelines.semantic_pipeline import SemanticPipeline
+from vanna_skill.semantic.catalog import invalidate_semantic_cache
+from vanna_skill.semantic.schema_scanner import SchemaScanner
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s  %(message)s")
@@ -35,6 +38,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 _vanna: Optional[DorisVanna] = None
 _ask_lc_pipeline: Optional[AskLCPipeline] = None
+_semantic_pipeline: Optional[SemanticPipeline] = None
 _prompt_store: Optional[PromptStore] = None
 
 
@@ -75,6 +79,13 @@ def get_ask_lc_pipeline() -> AskLCPipeline:
     if _ask_lc_pipeline is None:
         _ask_lc_pipeline = AskLCPipeline(build_runtime_config())
     return _ask_lc_pipeline
+
+
+def get_semantic_pipeline() -> SemanticPipeline:
+    global _semantic_pipeline, CONFIG
+    if _semantic_pipeline is None:
+        _semantic_pipeline = SemanticPipeline(build_runtime_config())
+    return _semantic_pipeline
 
 # ── 前端静态文件 ──────────────────────────────────────────────────────────────
 UI_DIR = Path(__file__).parent.parent / "ui"
@@ -212,6 +223,8 @@ class ConfigRequest(BaseModel):
     qwen_api_key: str
     model: str = "qwen-plus"
     n_results: int = 5
+    langchain_fallback_enabled: bool = False
+    semantic_to_langchain_fallback_enabled: bool = False
 
 
 class SystemPromptRequest(BaseModel):
@@ -509,7 +522,7 @@ def get_config():
 
 @app.post("/config")
 def update_config(req: ConfigRequest):
-    global CONFIG, _vanna, _ask_lc_pipeline, _prompt_store
+    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store
     qwen_api_key = req.qwen_api_key.strip()
     updated = CONFIG.copy()
     updated.update({
@@ -518,13 +531,18 @@ def update_config(req: ConfigRequest):
         "database": req.database,
         "model": req.model,
         "n_results": req.n_results,
+        "langchain_fallback_enabled": req.langchain_fallback_enabled,
+        "embedding_fallback_mode": "keyword" if req.langchain_fallback_enabled else "fail",
+        "semantic_to_langchain_fallback_enabled": req.semantic_to_langchain_fallback_enabled,
     })
     if qwen_api_key and "..." not in qwen_api_key:
         updated["qwen_api_key"] = qwen_api_key
     CONFIG = save_config(updated)
     _vanna = None  # 重置连接，下次调用重新初始化
     _ask_lc_pipeline = None
+    _semantic_pipeline = None
     _prompt_store = None
+    invalidate_semantic_cache()
     return {"status": "ok", "message": "配置已更新，连接已重置"}
 
 
@@ -631,6 +649,414 @@ def update_ab_test(req: ABTestRequest):
     _ask_lc_pipeline = None
     state = get_prompt_store().get_prompt_state(CONFIG.get("initial_prompt", ""))
     return {"status": "ok", "message": "A/B Test 配置已保存", "ab_test": state.get("ab_test", {})}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 语义路径 API
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.post("/ask/semantic")
+def ask_semantic(req: AskRequest):
+    """语义路径同步接口（POST）。"""
+    try:
+        return get_semantic_pipeline().run(req.question)
+    except Exception as e:
+        logger.exception(f"[ask/semantic] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/ask/semantic/stream")
+def ask_semantic_stream(q: str = Query(..., description="自然语言问题")):
+    """
+    语义路径 SSE 实时推送。
+    事件类型与 /ask-lc/stream 相同：start | step_start | step_done | final | error
+    """
+    step_queue: queue_module.Queue = queue_module.Queue()
+
+    def callback(event_type: str, data: dict):
+        step_queue.put((event_type, data))
+
+    def run_ask():
+        try:
+            get_semantic_pipeline().run(q, step_callback=callback)
+        except Exception as e:
+            step_queue.put(("error", {"error": str(e)}))
+
+    threading.Thread(target=run_ask, daemon=True).start()
+
+    def event_generator():
+        while True:
+            try:
+                event_type, data = step_queue.get(timeout=60)
+                payload = json.dumps(data, ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {payload}\n\n"
+                if event_type in ("final", "error"):
+                    break
+            except queue_module.Empty:
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.post("/semantic/reload")
+def semantic_reload():
+    """强制从 YAML 重新加载语义目录（YAML → DB），并刷新进程级缓存。"""
+    global _semantic_pipeline
+    try:
+        pipeline = get_semantic_pipeline()
+        pipeline._catalog.reload()
+        invalidate_semantic_cache()
+        _semantic_pipeline = None   # 下次请求重建（新 catalog 实例）
+        stats = pipeline._catalog.stats()
+        return {"status": "ok", "message": "已从 YAML 重新加载并写入 DB", "stats": stats}
+    except Exception as e:
+        logger.exception(f"[semantic/reload] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/semantic/export")
+def semantic_export():
+    """
+    DB → YAML 导出：读取 semantic_store 当前状态，返回 YAML 文本。
+    前端可用此接口下载当前语义定义，编辑后再通过 /semantic/import 导入。
+    """
+    try:
+        catalog = get_semantic_pipeline()._catalog
+        yaml_str = catalog.dump_yaml()
+        from fastapi.responses import Response
+        return Response(
+            content=yaml_str,
+            media_type="text/yaml; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=semantic_{catalog._db_name}.yaml"},
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+class ImportYamlRequest(BaseModel):
+    yaml_content: str = Field(..., description="YAML 文本内容")
+    save_file: bool = Field(False, description="是否同时覆写本地 YAML 文件")
+
+
+@app.post("/semantic/import")
+def semantic_import(req: ImportYamlRequest):
+    """
+    YAML → DB 导入：把 YAML 文本解析后写入 semantic_store，刷新内存 Catalog。
+    这是维护语义定义的主入口：在 UI 里编辑 YAML → 点「导入」→ 立即生效。
+    """
+    global _semantic_pipeline
+    try:
+        catalog = get_semantic_pipeline()._catalog
+        stats = catalog.import_yaml(req.yaml_content, save_to_db=True)
+        if req.save_file:
+            path = catalog.save_yaml_file()
+            return {"status": "ok", "message": f"已导入并保存到 {path}", "stats": stats}
+        # 刷新全局缓存
+        invalidate_semantic_cache()
+        _semantic_pipeline = None
+        return {"status": "ok", "message": "YAML 已导入 DB，语义目录已刷新", "stats": stats}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception(f"[semantic/import] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+class UpsertMetricRequest(BaseModel):
+    name: str
+    label: str
+    metric_type: str = "simple"
+    complexity: str = "normal"
+    expression: str = ""
+    primary_source: Optional[dict] = None
+    extra_joins: list = []
+    time_column: str = ""
+    numerator_expr: str = ""
+    denominator_expr: str = ""
+    output_format: str = "number"
+    unit: str = ""
+    compatible_dimensions: list = []
+    synonyms: list = []
+    tags: list = []
+    description: str = ""
+
+
+class UpsertDimensionRequest(BaseModel):
+    name: str
+    label: str
+    dim_type: str = "attribute"
+    entity: Optional[str] = None
+    grain: Optional[str] = None
+    expression: str = ""
+    alias: str = ""
+    join: Optional[dict] = None
+    select_fields: list = []
+    synonyms: list = []
+    tags: list = []
+    description: str = ""
+
+
+@app.put("/semantic/metric")
+def upsert_metric(req: UpsertMetricRequest):
+    """单条指标 upsert（新增或覆盖），立即写入 DB 并刷新内存 Catalog。"""
+    try:
+        catalog = get_semantic_pipeline()._catalog
+        catalog.upsert_metric(req.dict())
+        return {"status": "ok", "name": req.name}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.put("/semantic/dimension")
+def upsert_dimension(req: UpsertDimensionRequest):
+    """单条维度 upsert（新增或覆盖），立即写入 DB 并刷新内存 Catalog。"""
+    try:
+        catalog = get_semantic_pipeline()._catalog
+        catalog.upsert_dimension(req.dict())
+        return {"status": "ok", "name": req.name}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/semantic/node/{node_type}/{name}")
+def delete_semantic_node(node_type: str, name: str):
+    """
+    删除单个语义节点。
+    node_type: metric | dimension | entity | business
+    """
+    try:
+        catalog = get_semantic_pipeline()._catalog
+        ok = catalog.delete_node(node_type, name)
+        if not ok:
+            raise HTTPException(404, f"{node_type}:{name} 不存在")
+        return {"status": "ok", "deleted": f"{node_type}:{name}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/semantic/catalog")
+def semantic_catalog():
+    """返回当前语义目录统计信息及节点列表（用于管理页面）。"""
+    try:
+        catalog = get_semantic_pipeline()._catalog
+        return {
+            "stats": catalog.stats(),
+            "metrics": [
+                {
+                    "name": m.name,
+                    "label": m.label,
+                    "metric_type": m.metric_type,
+                    "complexity": m.complexity,
+                    "expression": m.expression,
+                    "primary_table": m.primary_table,
+                    "primary_alias": m.primary_alias,
+                    "time_column": m.time_column,
+                    "extra_joins": [
+                        {"table": j.table, "alias": j.alias, "join_type": j.join_type, "on": j.on}
+                        for j in m.extra_joins
+                    ],
+                    "compatible_dimensions": m.compatible_dimensions,
+                    "output_format": m.output_format,
+                    "unit": m.unit,
+                    "tags": m.tags,
+                    "synonyms": m.synonyms,
+                    "description": m.description,
+                }
+                for m in catalog._metrics.values()
+            ],
+            "dimensions": [
+                {
+                    "name": d.name,
+                    "label": d.label,
+                    "dim_type": d.dim_type,
+                    "grain": d.grain,
+                    "expression": d.expression,
+                    "alias": d.alias,
+                    "join": {
+                        "table": d.join.table,
+                        "alias": d.join.alias,
+                        "join_type": d.join.join_type,
+                        "on": d.join.on,
+                    } if d.join else None,
+                    "select_fields": d.select_fields,
+                    "tags": d.tags,
+                    "synonyms": d.synonyms,
+                    "description": d.description,
+                }
+                for d in catalog._dimensions.values()
+            ],
+            "business_domains": [
+                {
+                    "name": b.name,
+                    "label": b.label,
+                    "related_metrics": b.related_metrics,
+                    "related_dimensions": b.related_dimensions,
+                    "typical_questions": b.typical_questions,
+                    "synonyms": b.synonyms,
+                }
+                for b in catalog._businesses.values()
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+class ScanRequest(BaseModel):
+    include_tables: Optional[list] = None   # None = 全部表
+    audit_limit: int = 5000                 # 分析最近 N 条 audit_log
+    min_confidence: float = 0.3             # 过滤低置信度草稿
+    apply_to_db: bool = False               # True = 扫描后直接写入 DB（跳过预览）
+
+
+@app.post("/semantic/scan")
+def semantic_scan(req: ScanRequest):
+    """
+    自动扫描 information_schema + audit_log，生成语义定义草稿。
+
+    默认只返回草稿（apply_to_db=false），前端预览后用户选择性应用。
+    apply_to_db=true 时直接写入 semantic_store（适合首次自动初始化）。
+    """
+    try:
+        cfg = build_runtime_config()
+        conn = dict(
+            host=cfg["host"], port=cfg["port"],
+            user=cfg["user"], password=cfg.get("password", ""),
+        )
+        db_name = cfg.get("database", "retail_dw")
+
+        # biz_client：用于 information_schema 查询（不指定 database，information_schema 是全局的）
+        biz_client = DorisClient(**conn, database=db_name)
+        # audit_client：同一个连接即可，audit_log 在 __internal_schema
+        audit_client = DorisClient(**conn, database="")
+
+        scanner = SchemaScanner(
+            biz_client=biz_client,
+            audit_client=audit_client,
+            db_name=db_name,
+        )
+        result = scanner.scan(
+            include_tables=req.include_tables,
+            audit_limit=req.audit_limit,
+            min_confidence=req.min_confidence,
+        )
+
+        proposals_out = [
+            {
+                "node_type": p.node_type,
+                "name": p.name,
+                "label": p.label,
+                "description": p.description,
+                "confidence": round(p.confidence, 2),
+                "source": p.source,
+                "data": p.data,
+            }
+            for p in result.proposals
+        ]
+
+        response = {
+            "status": "ok",
+            "db_name": result.db_name,
+            "stats": {
+                "tables_scanned": result.tables_scanned,
+                "columns_scanned": result.columns_scanned,
+                "audit_logs_analyzed": result.audit_logs_analyzed,
+                "proposals_total": len(result.proposals),
+                "by_type": {
+                    "entity":    sum(1 for p in result.proposals if p.node_type == "entity"),
+                    "dimension": sum(1 for p in result.proposals if p.node_type == "dimension"),
+                    "metric":    sum(1 for p in result.proposals if p.node_type == "metric"),
+                },
+            },
+            "proposals": proposals_out,
+            "warnings": result.warnings,
+        }
+
+        if req.apply_to_db:
+            # 直接把全部草稿写入 semantic_store
+            import yaml as _yaml
+            yaml_dict = result.to_yaml_dict()
+            catalog = get_semantic_pipeline()._catalog
+            stats = catalog.import_yaml(
+                _yaml.dump(yaml_dict, allow_unicode=True, default_flow_style=False),
+                save_to_db=True,
+            )
+            invalidate_semantic_cache()
+            global _semantic_pipeline
+            _semantic_pipeline = None
+            response["applied"] = True
+            response["catalog_stats"] = stats
+        else:
+            response["applied"] = False
+
+        return response
+
+    except Exception as e:
+        logger.exception(f"[semantic/scan] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+class ApplyScanRequest(BaseModel):
+    proposals: list   # 前端选中的草稿 data 列表（每项是 YAML-compatible dict）
+    node_types: Optional[list] = None  # 可选过滤：["metric","dimension","entity"]
+
+
+@app.post("/semantic/scan/apply")
+def semantic_scan_apply(req: ApplyScanRequest):
+    """
+    把扫描草稿中用户选中的部分写入 semantic_store。
+    前端在预览页勾选条目后调用此接口。
+    """
+    try:
+        import yaml as _yaml
+        catalog = get_semantic_pipeline()._catalog
+
+        entities, dimensions, metrics = [], [], []
+        for item in req.proposals:
+            nt = item.get("node_type", "")
+            if req.node_types and nt not in req.node_types:
+                continue
+            d = item.get("data", item)
+            if nt == "entity":
+                entities.append(d)
+            elif nt == "dimension":
+                dimensions.append(d)
+            elif nt == "metric":
+                metrics.append(d)
+
+        yaml_dict = {
+            "version": "1.0",
+            "db_name": catalog._db_name,
+            "entities": entities,
+            "dimensions": dimensions,
+            "metrics": metrics,
+            "business": [],
+        }
+        stats = catalog.import_yaml(
+            _yaml.dump(yaml_dict, allow_unicode=True, default_flow_style=False),
+            save_to_db=True,
+        )
+        invalidate_semantic_cache()
+        global _semantic_pipeline
+        _semantic_pipeline = None
+
+        return {
+            "status": "ok",
+            "applied": len(entities) + len(dimensions) + len(metrics),
+            "catalog_stats": stats,
+        }
+    except Exception as e:
+        logger.exception(f"[semantic/scan/apply] 失败: {e}")
+        raise HTTPException(500, str(e))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,30 @@
+<div class="tab-pane" id="pane-doc">
+        <div class="filter-bar">
+          <input class="form-input" id="doc-filter-search" placeholder="搜索标题/文档…"
+            oninput="filterDocTable()" style="width:240px">
+          <button class="btn btn-secondary" onclick="loadDocSources()">🔄 刷新</button>
+          <span id="doc-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="form-group" style="margin-bottom:12px">
+              <label class="form-label">业务说明 / 注释</label>
+              <textarea class="form-input form-textarea" id="add-doc" placeholder="dws_user_trade_daily 表记录用户每日交易聚合..." style="min-height:180px"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="addDoc()">✅ 添加文档</button>
+          </div>
+        </div>
+        <div class="result-table-wrap">
+          <div class="table-scroll" style="max-height:calc(100vh - 260px)">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th><th>来源</th><th>标题</th>
+                  <th>内容预览</th><th>命中</th><th>质量</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="doc-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>

@@ -1,0 +1,85 @@
+<div class="tab-pane" id="pane-prompt">
+        <div class="section-grid">
+          <div class="stack-col">
+            <div class="card">
+              <div class="card-header"><span class="card-title">🧠 Prompt 版本管理</span></div>
+              <div class="card-body">
+                <div class="lab-grid" style="margin-bottom:12px">
+                  <div class="form-group">
+                    <label class="form-label">版本 ID</label>
+                    <input class="form-input" id="prompt-version-id" placeholder="例如：default / strict_v2">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">展示名称</label>
+                    <input class="form-input" id="prompt-version-name" placeholder="例如：Strict Doris v2">
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:12px">
+                  <label class="form-label">版本说明</label>
+                  <input class="form-input" id="prompt-version-desc" placeholder="例如：更严格的字段忠诚度与聚合约束">
+                </div>
+                <div class="form-group" style="margin-bottom:12px">
+                  <label class="form-label">System Prompt</label>
+                  <textarea class="form-input form-textarea" id="prompt-version-text"
+                    style="min-height:260px;font-family:var(--mono)"
+                    placeholder="维护 LangChain SQL 生成的系统提示词版本。"></textarea>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <button class="btn btn-primary" onclick="savePromptVersion()">💾 保存版本</button>
+                  <button class="btn btn-secondary" onclick="activatePromptVersion()">🚀 设为激活版本</button>
+                  <button class="btn btn-secondary" onclick="loadPromptLab()">🔄 重新加载</button>
+                  <span id="prompt-lab-msg" style="font-size:12px;color:var(--text3)"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><span class="card-title">🧪 A/B Test 配置</span></div>
+              <div class="card-body">
+                <div class="lab-grid">
+                  <div class="form-group">
+                    <label class="form-label">版本 A</label>
+                    <select class="form-input" id="ab-version-a"></select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">版本 B</label>
+                    <select class="form-input" id="ab-version-b"></select>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;margin:12px 0">
+                  <input id="ab-enabled" type="checkbox">
+                  <label for="ab-enabled" class="form-label" style="margin:0">启用 A/B Test 展示配置</label>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <button class="btn btn-primary" onclick="saveABTest()">💾 保存 A/B 配置</button>
+                  <span id="ab-test-msg" style="font-size:12px;color:var(--text3)"></span>
+                </div>
+                <hr class="divider">
+                <div class="form-hint">
+                  这一版先把版本治理和 A/B 配置显式管理起来，后续可以继续扩展成按流量比例路由、按 trace 打标签和效果对比报表。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack-col">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">📚 已有版本</span>
+                <span class="tag" id="active-prompt-badge">ACTIVE · default</span>
+              </div>
+              <div class="card-body">
+                <div class="version-list" id="prompt-version-list"></div>
+              </div>
+            </div>
+
+            <div class="hero-note">
+              <div style="font-weight:700;color:var(--text);margin-bottom:6px">Prompt Lab 现在能看到什么</div>
+              <div>1. 当前 LangChain 使用的激活 Prompt 版本。</div>
+              <div>2. 每个版本的名称、说明和完整 system prompt。</div>
+              <div>3. A/B Test 的 A/B 版本配置。</div>
+              <div>4. 问数链路里 <code>③ 组装 Prompt</code> 会显示使用的版本信息。</div>
+            </div>
+          </div>
+        </div>
+      </div>

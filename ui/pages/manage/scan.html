@@ -1,0 +1,23 @@
+<div class="tab-pane" id="pane-scan">
+        <div style="display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start">
+
+          <!-- 左：扫描参数 -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">🤖 扫描参数</span></div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">audit_log 条数上限</label>
+                <input class="form-input" type="number" id="scan-audit-limit" value="2000">
+              </div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">最低置信度</label>
+                <input class="form-input" type="number" id="scan-min-conf" value="0.5" step="0.05" min="0" max="1">
+              </div>
+              <div class="form-group" style="margin-bottom:12px">
+                <label class="form-label">仅扫描指定表 (逗号分隔，留空全扫)</label>
+                <input class="form-input" id="scan-tables" placeholder="dwd_trade_order_detail,dws_user_daily">
+              </div>
+              <button class="btn btn-primary" id="btn-scan" onclick="doScan()" style="width:100%">🚀 开始扫描</button>
+              <div id="scan-status" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>
+            </div>
+          </div>

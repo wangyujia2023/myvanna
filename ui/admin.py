@@ -177,9 +177,14 @@ if page == "📊 仪表盘":
 elif page == "📚 训练数据":
     st.title("📚 训练数据管理")
 
+    import requests as _req
+    API_BASE = "http://localhost:8765"
+
     vn = get_vanna()
-    tab_browse, tab_add, tab_audit, tab_schema = st.tabs([
+    (tab_browse, tab_add, tab_audit, tab_schema,
+     tab_semantic, tab_scan, tab_sync) = st.tabs([
         "浏览/删除", "手动添加", "🔄 挖掘 audit_log", "📥 同步元数据",
+        "🧬 语义配置", "🤖 自动扫描", "📤 同步管理",
     ])
 
     # ── 浏览/删除 ────────────────────────────────────────────────────────────
@@ -335,6 +340,485 @@ elif page == "📚 训练数据":
                     )
                 except Exception as e:
                     st.error(f"同步失败: {e}")
+
+    # ── 🧬 语义配置 ────────────────────────────────────────────────────────────
+    with tab_semantic:
+        st.subheader("🧬 语义定义管理")
+        st.caption("指标、维度、实体、业务域均存储在 **semantic_store** 数据库（DB 是主），通过此页面增删改查。")
+
+        # 加载 catalog 数据
+        try:
+            resp = _req.get(f"{API_BASE}/semantic/catalog", timeout=10)
+            resp.raise_for_status()
+            cat = resp.json()
+        except Exception as e:
+            st.warning(f"⚠️ 无法连接 API（{e}），请先启动后端服务")
+            cat = None
+
+        if cat:
+            s = cat.get("stats", {})
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("实体", s.get("entities", 0))
+            c2.metric("维度", s.get("dimensions", 0))
+            c3.metric("指标", s.get("metrics", 0))
+            c4.metric("业务域", s.get("businesses", 0))
+            st.divider()
+
+        sub_view, sub_add_m, sub_add_d = st.tabs(["📋 浏览 / 删除", "➕ 新增指标", "➕ 新增维度"])
+
+        # ── 浏览 / 删除 ──────────────────────────────────────────────────────
+        with sub_view:
+            if not cat:
+                st.info("暂无数据")
+            else:
+                view_m, view_d, view_biz = st.tabs([
+                    f"📈 指标 ({len(cat.get('metrics',[]))})",
+                    f"📐 维度 ({len(cat.get('dimensions',[]))})",
+                    f"🏢 业务域 ({len(cat.get('business_domains',[]))})",
+                ])
+
+                with view_m:
+                    for m in cat.get("metrics", []):
+                        with st.expander(
+                            f"**{m['label']}** `{m['name']}` "
+                            f"— {m['metric_type']} / {m.get('complexity','normal')}",
+                            expanded=False,
+                        ):
+                            col_info, col_del = st.columns([5, 1])
+                            with col_info:
+                                if m.get("expression"):
+                                    st.code(m["expression"], language="sql")
+                                st.write(
+                                    f"**主表:** `{m.get('primary_table','?')}` AS `{m.get('primary_alias','t')}`  "
+                                    f"**时间列:** `{m.get('time_column','')}`"
+                                )
+                                if m.get("compatible_dimensions"):
+                                    st.write("**兼容维度:**", ", ".join(m["compatible_dimensions"]))
+                                if m.get("synonyms"):
+                                    st.write("**同义词:**", ", ".join(m["synonyms"]))
+                                if m.get("extra_joins"):
+                                    for j in m["extra_joins"]:
+                                        st.code(
+                                            f"{j['join_type']} {j['table']} {j['alias']} ON {j['on']}",
+                                            language="sql",
+                                        )
+                            with col_del:
+                                if st.button("🗑️", key=f"dm_{m['name']}", help="删除该指标"):
+                                    try:
+                                        r = _req.delete(
+                                            f"{API_BASE}/semantic/node/metric/{m['name']}", timeout=10
+                                        )
+                                        r.raise_for_status()
+                                        st.success(f"已删除 {m['name']}")
+                                        st.rerun()
+                                    except Exception as ex:
+                                        st.error(str(ex))
+
+                with view_d:
+                    for d in cat.get("dimensions", []):
+                        with st.expander(
+                            f"**{d['label']}** `{d['name']}` — {d['dim_type']}"
+                            + (f" / {d['grain']}" if d.get("grain") else ""),
+                            expanded=False,
+                        ):
+                            col_info, col_del = st.columns([5, 1])
+                            with col_info:
+                                if d.get("expression"):
+                                    st.code(d["expression"], language="sql")
+                                if d.get("join"):
+                                    j = d["join"]
+                                    st.code(
+                                        f"{j['join_type']} {j['table']} {j['alias']} ON {j['on']}",
+                                        language="sql",
+                                    )
+                                if d.get("select_fields"):
+                                    st.write("**取字段:**", ", ".join(d["select_fields"]))
+                                if d.get("synonyms"):
+                                    st.write("**同义词:**", ", ".join(d["synonyms"]))
+                            with col_del:
+                                if st.button("🗑️", key=f"dd_{d['name']}", help="删除该维度"):
+                                    try:
+                                        r = _req.delete(
+                                            f"{API_BASE}/semantic/node/dimension/{d['name']}", timeout=10
+                                        )
+                                        r.raise_for_status()
+                                        st.success(f"已删除 {d['name']}")
+                                        st.rerun()
+                                    except Exception as ex:
+                                        st.error(str(ex))
+
+                with view_biz:
+                    for b in cat.get("business_domains", []):
+                        with st.expander(f"**{b['label']}** `{b['name']}`"):
+                            st.write("**关联指标:**", ", ".join(b.get("related_metrics", [])) or "—")
+                            st.write("**关联维度:**", ", ".join(b.get("related_dimensions", [])) or "—")
+                            if b.get("typical_questions"):
+                                st.write("**典型问题关键词:**")
+                                for q in b["typical_questions"]:
+                                    st.caption(f"  · {q}")
+                            if st.button("🗑️ 删除", key=f"db_{b['name']}"):
+                                try:
+                                    r = _req.delete(
+                                        f"{API_BASE}/semantic/node/business/{b['name']}", timeout=10
+                                    )
+                                    r.raise_for_status()
+                                    st.success(f"已删除 {b['name']}")
+                                    st.rerun()
+                                except Exception as ex:
+                                    st.error(str(ex))
+
+        # ── 新增指标 ──────────────────────────────────────────────────────────
+        with sub_add_m:
+            with st.form("sem_add_metric"):
+                c1, c2 = st.columns(2)
+                m_name   = c1.text_input("name（英文）*", placeholder="order_gmv")
+                m_label  = c2.text_input("label（中文）*", placeholder="GMV")
+                m_type   = c1.selectbox("metric_type", ["simple","ratio","derived","composite"])
+                m_cmplx  = c2.selectbox("complexity", ["normal","high"])
+                m_expr   = st.text_area("expression", placeholder="SUM({alias}.apportion_amt)")
+                c3, c4   = st.columns(2)
+                m_table  = c3.text_input("primary_table", placeholder="dwd_trade_order_wide")
+                m_alias  = c4.text_input("primary_alias", value="o")
+                m_tcol   = st.text_input("time_column", placeholder="o.dt 或 {alias}.dt")
+                m_num    = st.text_input("numerator_expr（ratio 分子）")
+                m_den    = st.text_input("denominator_expr（ratio 分母）")
+                c5, c6   = st.columns(2)
+                m_fmt    = c5.selectbox("output_format", ["number","currency","percent"])
+                m_unit   = c6.text_input("unit", placeholder="元 / % / 件")
+                m_compat = st.text_input("compatible_dimensions（逗号分隔）",
+                                         placeholder="time_month,store_dim")
+                m_syns   = st.text_input("synonyms（逗号分隔）")
+                m_tags   = st.text_input("tags（逗号分隔）", placeholder="core,revenue")
+                m_desc   = st.text_area("description（可选）", height=60)
+                m_joins  = st.text_area(
+                    "extra_joins JSON（可选）",
+                    height=70,
+                    placeholder='[{"table":"dim_store_info","alias":"s","join_type":"LEFT JOIN","on":"s.store_id = {fact_alias}.store_id"}]',
+                )
+                if st.form_submit_button("💾 保存到 DB", type="primary"):
+                    if not m_name or not m_label:
+                        st.error("name 和 label 为必填项")
+                    else:
+                        try:
+                            extra_joins = json.loads(m_joins) if m_joins.strip() else []
+                        except Exception:
+                            st.error("extra_joins JSON 格式有误")
+                            extra_joins = None
+                        if extra_joins is not None:
+                            payload = {
+                                "name": m_name.strip(), "label": m_label.strip(),
+                                "metric_type": m_type, "complexity": m_cmplx,
+                                "expression": m_expr.strip(),
+                                "primary_source": {"table": m_table.strip(), "alias": m_alias.strip()} if m_table.strip() else None,
+                                "extra_joins": extra_joins,
+                                "time_column": m_tcol.strip(),
+                                "numerator_expr": m_num.strip(), "denominator_expr": m_den.strip(),
+                                "output_format": m_fmt, "unit": m_unit.strip(),
+                                "compatible_dimensions": [x.strip() for x in m_compat.split(",") if x.strip()],
+                                "synonyms": [x.strip() for x in m_syns.split(",") if x.strip()],
+                                "tags": [x.strip() for x in m_tags.split(",") if x.strip()],
+                                "description": m_desc.strip(),
+                            }
+                            try:
+                                r = _req.put(f"{API_BASE}/semantic/metric", json=payload, timeout=15)
+                                r.raise_for_status()
+                                st.success(f"✅ 指标 `{m_name}` 已写入 DB")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"保存失败: {ex}")
+
+        # ── 新增维度 ──────────────────────────────────────────────────────────
+        with sub_add_d:
+            with st.form("sem_add_dim"):
+                c1, c2  = st.columns(2)
+                d_name  = c1.text_input("name（英文）*", placeholder="store_dim")
+                d_label = c2.text_input("label（中文）*", placeholder="门店维度")
+                d_type  = c1.selectbox("dim_type", ["attribute","entity_ref","time"])
+                d_grain = c2.selectbox("grain（time 类型用）", ["","day","month","quarter","year"])
+                d_expr  = st.text_area(
+                    "expression", height=60,
+                    placeholder="time: DATE_FORMAT({time_col},'%Y-%m')\nattribute: {fact_alias}.category_id",
+                )
+                d_alias = st.text_input("alias（SELECT别名）", placeholder="stat_month")
+                st.markdown("**JOIN 信息（entity_ref 类型填）**")
+                c3, c4       = st.columns(2)
+                d_join_table = c3.text_input("join.table", placeholder="dim_store_info")
+                d_join_alias = c4.text_input("join.alias", placeholder="s")
+                d_join_type  = c3.selectbox("join.join_type", ["LEFT JOIN","INNER JOIN","JOIN"])
+                d_join_on    = c4.text_input("join.on", placeholder="{fact_alias}.store_id = s.store_id")
+                d_sfields    = st.text_input("select_fields（逗号分隔）", placeholder="store_name,city")
+                d_syns       = st.text_input("synonyms（逗号分隔）")
+                d_tags       = st.text_input("tags（逗号分隔）", placeholder="store")
+                d_desc       = st.text_area("description（可选）", height=60)
+                if st.form_submit_button("💾 保存到 DB", type="primary"):
+                    if not d_name or not d_label:
+                        st.error("name 和 label 为必填项")
+                    else:
+                        join_obj = None
+                        if d_join_table.strip():
+                            join_obj = {
+                                "table": d_join_table.strip(),
+                                "alias": d_join_alias.strip(),
+                                "join_type": d_join_type,
+                                "on": d_join_on.strip(),
+                            }
+                        payload = {
+                            "name": d_name.strip(), "label": d_label.strip(),
+                            "dim_type": d_type, "grain": d_grain or None,
+                            "expression": d_expr.strip(),
+                            "alias": d_alias.strip() or d_name.strip(),
+                            "join": join_obj,
+                            "select_fields": [x.strip() for x in d_sfields.split(",") if x.strip()],
+                            "synonyms": [x.strip() for x in d_syns.split(",") if x.strip()],
+                            "tags": [x.strip() for x in d_tags.split(",") if x.strip()],
+                            "description": d_desc.strip(),
+                        }
+                        try:
+                            r = _req.put(f"{API_BASE}/semantic/dimension", json=payload, timeout=15)
+                            r.raise_for_status()
+                            st.success(f"✅ 维度 `{d_name}` 已写入 DB")
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"保存失败: {ex}")
+
+    # ── 🤖 自动扫描 ────────────────────────────────────────────────────────────
+    with tab_scan:
+        st.subheader("🤖 从 Doris Schema 自动生成语义定义")
+        st.caption(
+            "读取 `information_schema`（表结构、字段注释）"
+            " + `__internal_schema.audit_log`（历史 SQL 使用模式），"
+            "自动生成指标/维度/实体草稿，预览后选择性写入 `semantic_store`。"
+        )
+
+        with st.expander("⚙️ 扫描参数", expanded=True):
+            sc1, sc2, sc3 = st.columns(3)
+            audit_limit  = sc1.number_input("分析 audit_log 条数", 100, 50000, 5000, 500)
+            min_conf     = sc2.slider("最低置信度", 0.0, 1.0, 0.3, 0.05)
+            incl_tbls    = sc3.text_input(
+                "指定表（逗号分隔，留空=全部）",
+                placeholder="dwd_trade_order_wide,dim_store_info",
+            )
+
+        if st.button("▶️ 开始扫描", type="primary", use_container_width=True):
+            include_list = [t.strip() for t in incl_tbls.split(",") if t.strip()] or None
+            with st.spinner("正在扫描 information_schema 和 audit_log …"):
+                try:
+                    r = _req.post(
+                        f"{API_BASE}/semantic/scan",
+                        json={"include_tables": include_list,
+                              "audit_limit": int(audit_limit),
+                              "min_confidence": float(min_conf),
+                              "apply_to_db": False},
+                        timeout=120,
+                    )
+                    r.raise_for_status()
+                    st.session_state["sem_scan_result"] = r.json()
+                except Exception as e:
+                    st.error(f"扫描失败: {e}")
+
+        scan_data = st.session_state.get("sem_scan_result")
+        if scan_data:
+            stats = scan_data.get("stats", {})
+            st.success(
+                f"扫描完成 | 表 {stats.get('tables_scanned',0)} 张 | "
+                f"列 {stats.get('columns_scanned',0)} 个 | "
+                f"草稿 {stats.get('proposals_total',0)} 条"
+            )
+            proposals = scan_data.get("proposals", [])
+            if proposals:
+                st.divider()
+                by_type: dict = {"entity": [], "dimension": [], "metric": []}
+                for p in proposals:
+                    by_type.setdefault(p.get("node_type","metric"), []).append(p)
+
+                tab_pe, tab_pd, tab_pm = st.tabs([
+                    f"🏛️ 实体 ({len(by_type['entity'])})",
+                    f"📐 维度 ({len(by_type['dimension'])})",
+                    f"📈 指标 ({len(by_type['metric'])})",
+                ])
+
+                selected: list = []
+
+                def _render_scan_tab(plist: list, pfx: str) -> list:
+                    sel = []
+                    for i, p in enumerate(plist):
+                        conf = p.get("confidence", 0)
+                        icon = "🟢" if conf >= 0.7 else "🟡" if conf >= 0.5 else "🔴"
+                        chk = st.checkbox(
+                            f"{icon} **{p['label']}** `{p['name']}` — {conf:.0%}",
+                            value=(conf >= 0.6),
+                            key=f"sc_{pfx}_{i}",
+                        )
+                        if chk:
+                            sel.append(p)
+                        with st.expander("详情", expanded=False):
+                            st.caption(p.get("source", ""))
+                            d = p.get("data", {})
+                            if d.get("expression"):
+                                st.code(d["expression"], language="sql")
+                            if d.get("primary_source"):
+                                ps = d["primary_source"]
+                                st.write(f"主表: `{ps.get('table')}` AS `{ps.get('alias')}`")
+                            if d.get("join"):
+                                j = d["join"]
+                                st.code(
+                                    f"{j.get('join_type')} {j.get('table')} {j.get('alias')} ON {j.get('on')}",
+                                    language="sql",
+                                )
+                    return sel
+
+                with tab_pe:
+                    selected += _render_scan_tab(by_type["entity"], "e")
+                with tab_pd:
+                    selected += _render_scan_tab(by_type["dimension"], "d")
+                with tab_pm:
+                    selected += _render_scan_tab(by_type["metric"], "m")
+
+                st.divider()
+                ca, cb, cc = st.columns(3)
+                with ca:
+                    if st.button(
+                        f"✅ 写入 DB（已选 {len(selected)} 条）",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=len(selected) == 0,
+                    ):
+                        try:
+                            r = _req.post(
+                                f"{API_BASE}/semantic/scan/apply",
+                                json={"proposals": selected},
+                                timeout=30,
+                            )
+                            r.raise_for_status()
+                            res = r.json()
+                            st.success(
+                                f"✅ 已写入 {res.get('applied',0)} 条 | "
+                                f"catalog 统计: {res.get('catalog_stats',{})}"
+                            )
+                            st.session_state.pop("sem_scan_result", None)
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"写入失败: {ex}")
+                with cb:
+                    if st.button("📋 发送到同步管理/YAML编辑器", use_container_width=True):
+                        import yaml as _yaml
+                        entities  = [p["data"] for p in selected if p["node_type"]=="entity"]
+                        dimensions= [p["data"] for p in selected if p["node_type"]=="dimension"]
+                        metrics   = [p["data"] for p in selected if p["node_type"]=="metric"]
+                        st.session_state["sem_yaml_content"] = _yaml.dump(
+                            {"version":"1.0","db_name": scan_data.get("db_name",""),
+                             "entities":entities,"dimensions":dimensions,
+                             "metrics":metrics,"business":[]},
+                            allow_unicode=True, default_flow_style=False, sort_keys=False,
+                        )
+                        st.success("✅ 已发送到「同步管理」→ YAML 编辑器，可在那里继续修改后写入 DB")
+                with cc:
+                    st.caption(f"共 {len(proposals)} 条草稿")
+
+    # ── 📤 同步管理 ────────────────────────────────────────────────────────────
+    with tab_sync:
+        st.subheader("📤 同步管理")
+        st.caption(
+            "**DB → YAML**：把 `semantic_store` 当前状态导出为可编辑的 YAML。  \n"
+            "**YAML → DB**：把编辑好的 YAML 写回 `semantic_store`，立即生效。"
+        )
+
+        # 操作按钮行
+        btn1, btn2, btn3 = st.columns(3)
+
+        with btn1:
+            if st.button("⬇️ DB → 编辑器（导出）", use_container_width=True,
+                         help="从 semantic_store 读取当前定义，加载到下方编辑器"):
+                try:
+                    r = _req.get(f"{API_BASE}/semantic/export", timeout=30)
+                    r.raise_for_status()
+                    st.session_state["sem_yaml_content"] = r.text
+                    st.success("✅ 已导出，请在下方编辑器中查看 / 修改")
+                except Exception as e:
+                    st.error(f"导出失败: {e}")
+
+        with btn2:
+            if st.button("🔄 YAML 文件 → DB（重新加载）", use_container_width=True,
+                         help="用本地 catalog_yaml/*.yaml 文件覆写 DB（首次初始化 / 回滚用）"):
+                try:
+                    r = _req.post(f"{API_BASE}/semantic/reload", timeout=30)
+                    r.raise_for_status()
+                    data = r.json()
+                    st.success(f"✅ {data.get('message')} | {data.get('stats',{})}")
+                except Exception as e:
+                    st.error(f"重载失败: {e}")
+
+        with btn3:
+            # 查看当前统计
+            if cat:
+                s = cat.get("stats", {})
+                st.metric("当前 DB 指标数", s.get("metrics", "—"))
+            else:
+                st.info("API 未连接")
+
+        st.divider()
+
+        # YAML 编辑器
+        init_yaml = st.session_state.get(
+            "sem_yaml_content",
+            "# 点击「DB → 编辑器」加载当前语义定义，或直接粘贴 YAML 内容\n",
+        )
+        edited = st.text_area(
+            "YAML 编辑器",
+            value=init_yaml,
+            height=550,
+            key="sem_yaml_editor_area",
+            help="修改后点「编辑器 → DB（导入）」写入 semantic_store",
+        )
+
+        ea, eb, ec = st.columns(3)
+
+        with ea:
+            if st.button("⬆️ 编辑器 → DB（导入）", type="primary",
+                         use_container_width=True):
+                if not edited.strip() or edited.startswith("# 点击"):
+                    st.warning("请先加载或填入 YAML 内容")
+                else:
+                    try:
+                        r = _req.post(
+                            f"{API_BASE}/semantic/import",
+                            json={"yaml_content": edited, "save_file": False},
+                            timeout=30,
+                        )
+                        r.raise_for_status()
+                        d = r.json()
+                        st.session_state["sem_yaml_content"] = edited
+                        st.success(f"✅ 已写入 DB | {d.get('stats',{})}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"导入失败: {e}")
+
+        with eb:
+            if st.button("💾 编辑器 → DB + 本地文件", use_container_width=True,
+                         help="写入 DB 并同时覆写 catalog_yaml/*.yaml（版本备份）"):
+                if not edited.strip() or edited.startswith("# 点击"):
+                    st.warning("请先加载或填入 YAML 内容")
+                else:
+                    try:
+                        r = _req.post(
+                            f"{API_BASE}/semantic/import",
+                            json={"yaml_content": edited, "save_file": True},
+                            timeout=30,
+                        )
+                        r.raise_for_status()
+                        d = r.json()
+                        st.success(f"✅ {d.get('message')} | {d.get('stats',{})}")
+                    except Exception as e:
+                        st.error(f"保存失败: {e}")
+
+        with ec:
+            st.download_button(
+                "⬇️ 下载 YAML 文件",
+                data=edited,
+                file_name="semantic_catalog.yaml",
+                mime="text/yaml",
+                use_container_width=True,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -529,8 +1013,7 @@ elif page == "🔗 血缘分析":
         st.info("请先点击「从 audit_log 构建血缘图」")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# 🔍 调试控制台
+
 # ════════════════════════════════════════════════════════════════════════════
 elif page == "🔍 调试控制台":
     st.title("🔍 调试控制台")

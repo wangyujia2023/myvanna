@@ -1,0 +1,44 @@
+<div class="tab-pane" id="pane-sync">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+
+          <!-- 左：操作按钮 -->
+          <div class="stack-col">
+            <div class="card">
+              <div class="card-header"><span class="card-title">📤 DB → YAML</span></div>
+              <div class="card-body">
+                <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+                  将 semantic_store 当前数据导出为 YAML，加载到编辑器预览或下载文件。
+                </p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn btn-primary" onclick="exportYamlToEditor()">📋 DB → 编辑器</button>
+                  <button class="btn btn-secondary" onclick="downloadYaml()">⬇️ 下载 YAML</button>
+                </div>
+                <div id="sync-export-msg" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><span class="card-title">📥 YAML → DB</span></div>
+              <div class="card-body">
+                <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+                  将编辑器中的 YAML 内容导入 semantic_store（逐条 upsert）。
+                </p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn btn-primary" onclick="importYamlFromEditor(false)">📥 导入 DB</button>
+                  <button class="btn btn-secondary" onclick="importYamlFromEditor(true)">📥 导入 DB + 写本地文件</button>
+                </div>
+                <div id="sync-import-msg" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><span class="card-title">🔄 YAML 文件 → DB</span></div>
+              <div class="card-body">
+                <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+                  重新从 <code>catalog_yaml/</code> 目录下的 YAML 文件加载到 DB（适合手动修改文件后同步）。
+                </p>
+                <button class="btn btn-secondary" onclick="reloadYamlFile()">🔄 文件 → DB</button>
+                <div id="sync-reload-msg" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
+              </div>
+            </div>
+          </div>

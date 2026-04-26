@@ -1,0 +1,20 @@
+<div class="tab-pane" id="pane-lineage">
+        <div class="filter-bar">
+          <button class="btn btn-primary" onclick="rebuildLineage()">🔁 重建血缘</button>
+          <button class="btn btn-secondary" onclick="loadLineageSources()">查看血缘</button>
+          <span id="lineage-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
+        </div>
+        <div id="lineage-rebuild-result" class="hero-note" style="margin-bottom:12px;display:none"></div>
+        <div class="result-table-wrap">
+          <div class="table-scroll" style="max-height:calc(100vh - 260px)">
+            <table>
+              <thead>
+                <tr>
+                  <th>上游表</th><th>下游表</th><th>关系</th><th>SQL类型</th><th>来源</th><th>频次</th>
+                </tr>
+              </thead>
+              <tbody id="lineage-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>

@@ -162,7 +162,13 @@ class DorisRetriever:
             """,
             params,
         )
-        logger.debug(f"[Retriever] keyword fallback: '{query[:40]}' → {len(rows)} rows")
+        logger.warning(
+            "[Retriever] keyword fallback content_type=%s query=%s words=%s rows=%s",
+            content_type,
+            query[:120],
+            words,
+            len(rows),
+        )
         return rows
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -178,7 +184,19 @@ class DorisRetriever:
     ) -> List[Dict[str, Any]]:
         limit = top_k or self._top_k
         if vec is not None:
+            logger.info(
+                "[Retriever] vector search content_type=%s top_k=%s query=%s",
+                content_type,
+                limit,
+                query[:120],
+            )
             return self._search_by_vec(vec, content_type=content_type, top_k=limit)
+        logger.warning(
+            "[Retriever] search without embedding, downgrade to keyword content_type=%s top_k=%s query=%s",
+            content_type,
+            limit,
+            query[:120],
+        )
         return self._search_by_keyword(query, content_type=content_type, top_k=limit)
 
     # ─────────────────────────────────────────────────────────────────────────

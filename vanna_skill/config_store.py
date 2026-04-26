@@ -21,7 +21,9 @@ DEFAULT_CONFIG = {
     "model": "qwen-plus",
     "embedding_model": "text-embedding-v3",
     "n_results": 5,
-    "embedding_fallback_mode": "keyword",  # "keyword" | "fail"
+    "langchain_fallback_enabled": False,
+    "embedding_fallback_mode": "fail",  # "keyword" | "fail"
+    "semantic_to_langchain_fallback_enabled": False,
     "initial_prompt": "",
     "prompt_versions": [],
     "active_prompt_version": "default",
@@ -34,6 +36,14 @@ DEFAULT_CONFIG = {
 
 
 def _normalize_prompt_config(config: dict) -> dict:
+    if "langchain_fallback_enabled" not in config:
+        config["langchain_fallback_enabled"] = config.get("embedding_fallback_mode", "fail") == "keyword"
+    config["embedding_fallback_mode"] = (
+        "keyword" if config.get("langchain_fallback_enabled") else "fail"
+    )
+    config["semantic_to_langchain_fallback_enabled"] = bool(
+        config.get("semantic_to_langchain_fallback_enabled", False)
+    )
     prompt_versions = config.get("prompt_versions") or []
     initial_prompt = config.get("initial_prompt", "")
 

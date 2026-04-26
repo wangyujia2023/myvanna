@@ -1,0 +1,11 @@
+<div class="tab-pane" id="pane-meta">
+        <div class="filter-bar">
+          <button class="btn btn-primary" onclick="syncMeta()">🔄 同步元数据到知识库</button>
+          <button class="btn btn-secondary" onclick="loadMetaTables()">查看表列表</button>
+          <input class="form-input" id="meta-search" placeholder="搜索表名…"
+            oninput="filterMeta()" style="width:180px;margin-left:auto">
+        </div>
+        <div id="meta-container">
+          <div class="empty-state"><div class="empty-icon">🗄️</div><div class="empty-text">点击「查看表列表」加载</div></div>
+        </div>
+      </div>
