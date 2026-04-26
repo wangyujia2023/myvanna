@@ -33,6 +33,9 @@ from ..doris_client import DorisClient
 from ..qwen_client import QwenClient
 from ..semantic.catalog import get_catalog
 from ..semantic.models import IntentPlan, QueryPlan, SemanticPlan, SemanticResult
+from ..semantic.semantic_sql_rag import SemanticSQLRAGStore
+from ..skills.base import SkillContext
+from ..skills.semantic_sql_rag_skill import SemanticSQLRAGSkill
 from ..tracer import RequestTrace, tracer
 
 logger = logging.getLogger(__name__)
@@ -56,6 +59,9 @@ class SemanticPipeline:
         self._semantic_fallback_enabled = bool(
             config.get("semantic_to_langchain_fallback_enabled", False)
         )
+        self._semantic_sql_rag_enabled = bool(
+            config.get("semantic_sql_rag_enabled", False)
+        )
 
         # ── DB 连接 ────────────────────────────────────────────────────────
         _conn = dict(
@@ -73,6 +79,16 @@ class SemanticPipeline:
             api_key=config["qwen_api_key"],
             model=config.get("model", "qwen-plus"),
             embedding_model=config.get("embedding_model", "text-embedding-v3"),
+        )
+        self._semantic_sql_rag_store = SemanticSQLRAGStore(
+            self._sem,
+            self._vec,
+            self._llm,
+            db_name=config.get("database", "retail_dw"),
+        )
+        self._semantic_sql_skill = SemanticSQLRAGSkill(
+            self._semantic_sql_rag_store,
+            top_k=min(config.get("n_results", 5), 5),
         )
 
         # ── SemanticCatalog（进程级单例，使用独立的 semantic_store）────────
@@ -126,9 +142,10 @@ class SemanticPipeline:
 
         notify("start", {"trace_id": trace.trace_id, "question": question, "path": "semantic"})
         logger.info(
-            "[SemanticPipeline] start question=%r semantic_fallback_enabled=%s model=%s",
+            "[SemanticPipeline] start question=%r semantic_fallback_enabled=%s semantic_sql_rag_enabled=%s model=%s",
             question,
             self._semantic_fallback_enabled,
+            self._semantic_sql_rag_enabled,
             self._config.get("model", "qwen-plus"),
         )
         self._catalog.refresh_from_db(required=True)
@@ -202,15 +219,55 @@ class SemanticPipeline:
             )
 
         # ── Step 2: 语义解析 ───────────────────────────────────────────────
+        rag_sql_examples: List[Dict] = []
+        if self._semantic_sql_rag_enabled:
+            notify("step_start", {"name": "semantic_sql_rag", "label": "② 正确 SQL RAG 召回"})
+            step = trace.begin_step("semantic_sql_rag", {"normalized_query": intent.normalized_query})
+            query_text = intent.normalized_query or question
+            rag_error = ""
+            try:
+                rag_context = SkillContext(
+                    question=question,
+                    normalized_query=query_text,
+                    intent=intent.intent_type,
+                    entity=intent.business_domain,
+                )
+                rag_result = self._semantic_sql_skill.run(rag_context)
+                rag_sql_examples = rag_result.get("items", [])
+                step.finish(outputs={
+                    "enabled": True,
+                    "store": "semantic_store.vanna_semantic_sql_rag",
+                    "embedding_mode": "canonical_vector",
+                    "count": len(rag_sql_examples),
+                    "top_questions": [item.get("question", "") for item in rag_sql_examples[:3]],
+                    "top_canonical_questions": [item.get("canonical_question", "") for item in rag_sql_examples[:3]],
+                    "sources": sorted({item.get("source", "") for item in rag_sql_examples if item.get("source")}),
+                    "rag_error": rag_error,
+                })
+            except Exception as exc:
+                logger.warning("[SemanticPipeline] semantic_sql_rag 召回失败: %s", exc)
+                step.finish(
+                    status="error",
+                    outputs={"enabled": True, "count": 0},
+                    error=str(exc),
+                )
+            notify("step_done", step.to_dict())
+
         notify("step_start", {"name": "semantic_parse", "label": "② 语义解析"})
         step = trace.begin_step("semantic_parse", {"normalized_query": intent.normalized_query})
-        sp: SemanticPlan = self._semantic_parse.run(intent)
+        sp: SemanticPlan = (
+            self._semantic_parse.run_with_sql_rag(intent, rag_sql_examples)
+            if rag_sql_examples
+            else self._semantic_parse.run(intent)
+        )
         step.finish(outputs={
             "metrics": sp.metrics,
             "dimensions": sp.dimensions,
             "coverage_score": sp.coverage_score,
             "fallback_threshold": THRESHOLD_HYBRID,
             "semantic_fallback_enabled": self._semantic_fallback_enabled,
+            "sql_rag_enabled": self._semantic_sql_rag_enabled,
+            "sql_rag_count": len(rag_sql_examples),
             "analysis_type": sp.query_spec.analysis_type if sp.query_spec else "",
             "time_scope": (
                 {

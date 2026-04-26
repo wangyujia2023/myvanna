@@ -189,6 +189,31 @@ DISTRIBUTED BY HASH(snapshot_id) BUCKETS 2
 PROPERTIES ("replication_num" = "1");
 
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- 7. 语义 SQL RAG 表（参数占位后的语义模板样本）
+--    用于 SemanticPipeline 的独立召回，不复用 LangChain 的 SQL skill 逻辑
+-- ════════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS vanna_semantic_sql_rag (
+    rag_id                   BIGINT          NOT NULL COMMENT '样本ID',
+    source_sql_id            BIGINT                      COMMENT '来源 vanna_sql.id',
+    raw_question             TEXT                        COMMENT '原始问题',
+    canonical_question       TEXT                        COMMENT '参数占位后的问题模板',
+    sql_text                 TEXT                        COMMENT '对应 SQL',
+    source                   VARCHAR(64)                 COMMENT 'feedback / feedback_corrected',
+    db_name                  VARCHAR(100)                COMMENT '业务库',
+    quality_score            FLOAT           DEFAULT 0   COMMENT '质量分',
+    embedding                ARRAY<FLOAT>                COMMENT 'canonical_question 向量',
+    canonical_hash           VARCHAR(64)                 COMMENT '模板哈希',
+    metadata_json            TEXT                        COMMENT '附加元数据（JSON）',
+    created_at               DATETIME        DEFAULT CURRENT_TIMESTAMP,
+    updated_at               DATETIME        DEFAULT CURRENT_TIMESTAMP
+) ENGINE=OLAP
+DUPLICATE KEY(rag_id)
+COMMENT 'Semantic 独立 SQL RAG 样本表（参数占位向量检索）'
+DISTRIBUTED BY HASH(rag_id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
+
 -- ==========================================================================
 -- 验证
 -- SHOW TABLES FROM vanna_store LIKE 'vanna_semantic%';

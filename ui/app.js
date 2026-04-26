@@ -14,6 +14,7 @@ let abTestConfig = {enabled:false, version_a:'default', version_b:''};
 let sqlSourceData = [];
 let docSourceData = [];
 let lineageSourceData = [];
+let regressionReports = [];
 const pageCache = new Map();
 const tabCache = new Map();
 
@@ -103,10 +104,16 @@ async function showPage(name){
   }
   activateNav(name);
   const container = ensurePageContainer();
-  const html = await loadHtmlFragment(`/ui/pages/${name}.html`, pageCache);
-  container.innerHTML = html;
-  container.querySelector('.page')?.classList.add('active');
-  await afterPageLoad(name);
+  container.innerHTML = `<div class="page active"><div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">页面加载中…</div></div></div>`;
+  try{
+    const html = await loadHtmlFragment(`/ui/pages/${name}.html`, pageCache);
+    container.innerHTML = html;
+    container.querySelector('.page')?.classList.add('active');
+    await afterPageLoad(name);
+  }catch(e){
+    console.error('showPage failed', name, e);
+    container.innerHTML = `<div class="page active"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-text">页面加载失败：${esc(e.message||e)}</div></div></div>`;
+  }
 }
 
 async function showTab(name){
@@ -128,6 +135,7 @@ async function showTab(name){
   if(name==='meta') loadMetaTables();
   if(name==='lineage') loadLineageSources();
   if(name==='prompt') loadPromptLab();
+  if(name==='regression') initRegressionPage();
   if(name==='semantic') loadSemanticList();
 }
 
@@ -460,6 +468,7 @@ const STEP_LABELS = {
   llm_generate:       '⑤ LLM 推理生成 SQL',
   extract_sql:        '⑥ 提取 SQL',
   router_intent:      '① 意图解析与标准化',
+  semantic_sql_rag:   '② 正确 SQL RAG 召回',
   multi_recall:       '② 多路召回与融合',
   sql_guard:          '⑤ SQL Guard / EXPLAIN',
 };
@@ -1059,17 +1068,267 @@ async function doMine(){
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   回归测试
+════════════════════════════════════════════════════════════════════════ */
+const DEFAULT_REGRESSION_QUESTIONS = [
+  '4月份各城市销售额是多少？',
+  '今年4月份销售额是多少？',
+  '昨日各城市销售额环比增长多少？',
+  'PLUS会员和普通会员消费对比？',
+  '帮我看看按门店类型划分的客单价',
+  '4月份各城市销售额和净收入是多少？',
+];
+
+function initRegressionPage(){
+  const input = document.getElementById('regression-questions');
+  if(input && !input.value.trim()){
+    input.value = DEFAULT_REGRESSION_QUESTIONS.join('\n');
+  }
+  regressionReports = [];
+  const resultsEl = document.getElementById('regression-results');
+  const summaryEl = document.getElementById('regression-summary');
+  const copyBtn = document.getElementById('btn-copy-regression-all');
+  if(resultsEl){
+    resultsEl.innerHTML = '<div class="empty-state"><div class="empty-icon">🧪</div><div class="empty-text">粘贴多条问题后开始回归</div></div>';
+  }
+  if(summaryEl) summaryEl.textContent = '尚未执行';
+  if(copyBtn) copyBtn.disabled = true;
+}
+
+function fillRegressionSamples(){
+  const input = document.getElementById('regression-questions');
+  if(input) input.value = DEFAULT_REGRESSION_QUESTIONS.join('\n');
+}
+
+function getRegressionEndpoint(){
+  if(currentAskEngine === 'langchain') return '/ask-lc';
+  if(currentAskEngine === 'semantic') return '/ask/semantic';
+  return '/ask';
+}
+
+async function runRegressionBatch(){
+  const input = document.getElementById('regression-questions');
+  const statusEl = document.getElementById('regression-status');
+  const summaryEl = document.getElementById('regression-summary');
+  const resultsEl = document.getElementById('regression-results');
+  const copyBtn = document.getElementById('btn-copy-regression-all');
+  const btn = document.getElementById('btn-run-regression');
+  const questions = (input?.value || '')
+    .split('\n')
+    .map(s=>s.trim())
+    .filter(Boolean);
+
+  if(!questions.length){
+    toast('请至少输入一条问题', 'error');
+    return;
+  }
+
+  regressionReports = [];
+  btn.disabled = true;
+  btn.textContent = '⏳ 回归中…';
+  if(copyBtn) copyBtn.disabled = true;
+  if(statusEl) statusEl.textContent = `正在使用 ${currentAskEngine} 引擎执行 0/${questions.length}`;
+  if(summaryEl) summaryEl.textContent = `待执行 ${questions.length} 条`;
+  if(resultsEl) resultsEl.innerHTML = '';
+
+  let passed = 0;
+  let failed = 0;
+  for(let i=0;i<questions.length;i++){
+    const question = questions[i];
+    appendRegressionPending(question, i + 1);
+    try{
+      const payload = {question};
+      const path = getRegressionEndpoint();
+      const result = await apiFetch(path, {method:'POST', body: JSON.stringify(payload)});
+      const report = buildRegressionReport(question, result, i + 1);
+      regressionReports.push(report);
+      if(result.error || result.guard_ok === false) failed += 1;
+      else passed += 1;
+      renderRegressionResult(report);
+    }catch(e){
+      const report = buildRegressionReport(question, {error: e.message}, i + 1);
+      regressionReports.push(report);
+      failed += 1;
+      renderRegressionResult(report);
+    }
+    if(statusEl) statusEl.textContent = `正在使用 ${currentAskEngine} 引擎执行 ${i + 1}/${questions.length}`;
+    if(summaryEl) summaryEl.textContent = `已完成 ${i + 1}/${questions.length} · 通过 ${passed} · 失败 ${failed}`;
+  }
+
+  if(statusEl) statusEl.textContent = `执行完成：${questions.length} 条`;
+  if(summaryEl) summaryEl.textContent = `共 ${questions.length} 条 · 通过 ${passed} · 失败 ${failed}`;
+  if(copyBtn) copyBtn.disabled = regressionReports.length === 0;
+  btn.disabled = false;
+  btn.textContent = '▶ 开始回归';
+  toast(`回归完成：通过 ${passed}，失败 ${failed}`);
+}
+
+function appendRegressionPending(question, index){
+  const resultsEl = document.getElementById('regression-results');
+  if(!resultsEl) return;
+  const empty = resultsEl.querySelector('.empty-state');
+  if(empty) resultsEl.innerHTML = '';
+  const block = document.createElement('div');
+  block.className = 'step-card running';
+  block.id = `regression-item-${index}`;
+  block.style.marginBottom = '12px';
+  block.innerHTML = `
+    <div class="step-header" style="cursor:default">
+      <div class="step-icon running">↻</div>
+      <span class="step-name">[${index}] ${esc(question)}</span>
+      <span class="step-dur">执行中</span>
+    </div>
+    <div class="step-detail open">
+      <div class="detail-row"><span class="detail-label">状态</span><span class="detail-val">等待结果…</span></div>
+    </div>
+  `;
+  resultsEl.appendChild(block);
+}
+
+function buildRegressionReport(question, result, index){
+  const trace = result.trace || {};
+  const steps = trace.steps || [];
+  const status = result.error || result.guard_ok === false ? 'error' : 'ok';
+  const stepSummaries = steps.map((step, idx)=>({
+    index: idx + 1,
+    name: step.name || '',
+    label: STEP_LABELS[step.name] || step.label || step.name || `step_${idx + 1}`,
+    status: step.status || '',
+    duration_ms: step.duration_ms,
+    note: step.note || '',
+    outputs: step.outputs || {},
+    error: step.error || '',
+  }));
+
+  const formattedText = [
+    `# [${index}] ${question}`,
+    `engine: ${currentAskEngine}`,
+    `path: ${result.path || '-'}`,
+    `guard_ok: ${result.guard_ok === undefined ? '-' : String(result.guard_ok)}`,
+    `attempts: ${result.attempts ?? '-'}`,
+    `error: ${result.error || result.guard_reason || '-'}`,
+    '',
+    '## SQL',
+    result.sql || '-',
+    '',
+    '## Trace Summary',
+    ...stepSummaries.map(step => [
+      `- step_${step.index}: ${step.label}`,
+      `  name: ${step.name}`,
+      `  status: ${step.status}`,
+      `  duration_ms: ${step.duration_ms ?? '-'}`,
+      `  note: ${step.note || '-'}`,
+      `  outputs: ${JSON.stringify(step.outputs, null, 2)}`,
+      `  error: ${step.error || '-'}`,
+    ].join('\n')),
+    '',
+    '## Raw Result JSON',
+    JSON.stringify(result, null, 2),
+  ].join('\n');
+
+  return {
+    index,
+    question,
+    status,
+    result,
+    trace,
+    steps: stepSummaries,
+    formattedText,
+  };
+}
+
+function renderRegressionResult(report){
+  const el = document.getElementById(`regression-item-${report.index}`);
+  if(!el) return;
+  const result = report.result || {};
+  const sql = result.sql || '';
+  const stepHtml = report.steps.map(step => `
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;color:var(--text);font-size:12px">
+        ${esc(step.label)} · ${esc(step.status || '-')} · ${step.duration_ms != null ? `${step.duration_ms.toFixed(0)}ms` : '-'}
+      </summary>
+      <pre style="margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11.5px;overflow:auto"><code>${esc(JSON.stringify({
+        name: step.name,
+        status: step.status,
+        note: step.note,
+        outputs: step.outputs,
+        error: step.error,
+      }, null, 2))}</code></pre>
+    </details>
+  `).join('');
+
+  el.className = `step-card ${report.status}`;
+  el.innerHTML = `
+    <div class="step-header" style="cursor:default">
+      <div class="step-icon ${report.status}">${report.status === 'ok' ? '✓' : '✗'}</div>
+      <span class="step-name">[${report.index}] ${esc(report.question)}</span>
+      <span class="step-dur">${esc(result.path || '-')}</span>
+    </div>
+    <div class="step-detail open">
+      <div class="detail-row"><span class="detail-label">执行引擎</span><span class="detail-val">${esc(currentAskEngine)}</span></div>
+      <div class="detail-row"><span class="detail-label">路径</span><span class="detail-val highlight">${esc(result.path || '-')}</span></div>
+      <div class="detail-row"><span class="detail-label">Guard</span><span class="detail-val">${result.guard_ok === undefined ? '-' : (result.guard_ok ? '通过' : '失败')}</span></div>
+      <div class="detail-row"><span class="detail-label">尝试次数</span><span class="detail-val">${result.attempts ?? '-'}</span></div>
+      <div class="detail-row"><span class="detail-label">错误</span><span class="detail-val" style="color:${report.status === 'ok' ? 'var(--text2)' : 'var(--red)'}">${esc(result.error || result.guard_reason || '-')}</span></div>
+      <div class="detail-subtitle">SQL</div>
+      <pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11.5px;overflow:auto"><code class="language-sql">${esc(sql || '-')}</code></pre>
+      <div class="detail-subtitle">关键步骤</div>
+      ${stepHtml || '<div class="form-hint">无 trace 详情</div>'}
+      <div class="detail-subtitle" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>原始 Result JSON</span>
+        <button class="btn btn-sm btn-secondary" onclick="copyRegressionItem(${report.index})">📋 复制本条报告</button>
+      </div>
+      <pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11.5px;overflow:auto"><code>${esc(JSON.stringify(result, null, 2))}</code></pre>
+    </div>
+  `;
+  Prism.highlightAll();
+}
+
+function copyRegressionItem(index){
+  const report = regressionReports.find(item => item.index === index);
+  if(!report){
+    toast('未找到对应报告', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(report.formattedText).then(()=>toast(`已复制第 ${index} 条报告`));
+}
+
+function copyRegressionReport(){
+  if(!regressionReports.length){
+    toast('还没有可复制的报告', 'error');
+    return;
+  }
+  const combined = regressionReports.map(r => r.formattedText).join('\n\n' + '='.repeat(100) + '\n\n');
+  navigator.clipboard.writeText(combined).then(()=>toast('已复制全部回归报告'));
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    调用日志
 ════════════════════════════════════════════════════════════════════════ */
 async function loadLogs(){
+  const listEl = document.getElementById('log-list');
+  const detailEl = document.getElementById('log-detail');
+  const statsEl = document.getElementById('log-stats');
+  if(listEl) listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">加载中…</div>';
+  if(detailEl) detailEl.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">正在加载调用日志…</div></div>';
   try{
     const res=await apiFetch('/traces?n=100');
     const traces=res.traces||[];
     const stats=res.stats||{};
-    document.getElementById('log-stats').textContent =
+    if(statsEl) statsEl.textContent =
       `共${stats.total||0}条 · 成功率${stats.success_rate||'—'} · 均${stats.avg_ms||0}ms`;
     renderLogList(traces);
-  }catch(e){document.getElementById('log-list').innerHTML=`<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;}
+    if(traces.length){
+      const first = traces[0];
+      const firstEl = document.querySelector('.log-item');
+      await showLogDetail(first.trace_id, firstEl);
+    }else if(detailEl){
+      detailEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">暂无记录</div></div>';
+    }
+  }catch(e){
+    if(listEl) listEl.innerHTML=`<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;
+    if(detailEl) detailEl.innerHTML=`<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;
+  }
 }
 
 function renderLogList(traces){
@@ -1085,12 +1344,17 @@ function renderLogList(traces){
   `).join('') || '<div style="padding:24px;text-align:center;color:var(--text3)">暂无记录</div>';
 }
 
-function showLogDetail(traceId, el){
+async function showLogDetail(traceId, el){
   document.querySelectorAll('.log-item').forEach(i=>i.classList.remove('selected'));
   if(el) el.classList.add('selected');
-  apiFetch('/traces/'+traceId).then(t=>{
+  const detailEl = document.getElementById('log-detail');
+  if(detailEl){
+    detailEl.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">正在加载详情…</div></div>';
+  }
+  try{
+    const t = await apiFetch('/traces/'+traceId);
     const steps=t.steps||[];
-    document.getElementById('log-detail').innerHTML=`
+    detailEl.innerHTML=`
       <div style="margin-bottom:16px">
         <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
           <span class="log-status ${t.status}">${{ok:'✓ 成功',error:'✗ 失败'}[t.status]||t.status}</span>
@@ -1126,7 +1390,9 @@ function showLogDetail(traceId, el){
         </div>`:''}
     `;
     Prism.highlightAll();
-  }).catch(e=>{ document.getElementById('log-detail').innerHTML=`<div style="color:var(--red)">${esc(e.message)}</div>`; });
+  }catch(e){
+    if(detailEl) detailEl.innerHTML=`<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1145,6 +1411,7 @@ async function loadConfig(){
     document.getElementById('cfg-n').value=c.n_results||5;
     document.getElementById('cfg-lc-fallback').checked=!!c.langchain_fallback_enabled;
     document.getElementById('cfg-semantic-fallback').checked=!!c.semantic_to_langchain_fallback_enabled;
+    document.getElementById('cfg-semantic-sql-rag').checked=!!c.semantic_sql_rag_enabled;
     document.getElementById('db-info').textContent=`${c.database} @ ${c.host}`;
   }catch(e){ console.warn('loadConfig failed',e); }
 }
@@ -1161,6 +1428,7 @@ async function saveConfig(){
     n_results:parseInt(document.getElementById('cfg-n').value),
     langchain_fallback_enabled:document.getElementById('cfg-lc-fallback').checked,
     semantic_to_langchain_fallback_enabled:document.getElementById('cfg-semantic-fallback').checked,
+    semantic_sql_rag_enabled:document.getElementById('cfg-semantic-sql-rag').checked,
   };
   try{
     const res=await apiFetch('/config',{method:'POST',body:JSON.stringify(body)});

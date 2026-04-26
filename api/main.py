@@ -228,6 +228,7 @@ class ConfigRequest(BaseModel):
     n_results: int = 5
     langchain_fallback_enabled: bool = False
     semantic_to_langchain_fallback_enabled: bool = False
+    semantic_sql_rag_enabled: bool = False
 
 
 class SystemPromptRequest(BaseModel):
@@ -538,6 +539,7 @@ def update_config(req: ConfigRequest):
         "langchain_fallback_enabled": req.langchain_fallback_enabled,
         "embedding_fallback_mode": "keyword" if req.langchain_fallback_enabled else "fail",
         "semantic_to_langchain_fallback_enabled": req.semantic_to_langchain_fallback_enabled,
+        "semantic_sql_rag_enabled": req.semantic_sql_rag_enabled,
     })
     if qwen_api_key and "..." not in qwen_api_key:
         updated["qwen_api_key"] = qwen_api_key

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -220,21 +221,67 @@ class SemanticSQLCompiler:
         cols: List[Tuple[str, str]] = []
         for dim in dimensions:
             alias_name = dim.select_alias
+
             if dim.dim_type == "time":
                 time_col = group.time_column if "." in group.time_column else f"{group.primary_alias}.{group.time_column or 'dt'}"
                 expr = (dim.expression or "{time_col}").replace("{time_col}", time_col)
                 cols.append((expr, alias_name))
-            elif dim.dim_type == "entity_ref" and dim.join and dim.select_fields:
-                for field in dim.select_fields:
-                    if " AS " in field.upper():
-                        expr, alias = field.split(" AS ", 1)
-                        cols.append((f"{dim.join.alias}.{expr.strip()}", alias.strip()))
-                    else:
-                        cols.append((f"{dim.join.alias}.{field}", field))
+
+            elif dim.dim_type == "entity_ref" and dim.join:
+                cols.extend(self._entity_ref_projection(group, dim, alias_name))
             else:
                 expr = dim.expression.replace("{fact_alias}", group.primary_alias) if dim.expression else f"{group.primary_alias}.{dim.name}"
                 cols.append((expr, alias_name))
+
         return cols
+
+    def _entity_ref_projection(
+        self,
+        group: SourceGroup,
+        dim: DimensionDef,
+        alias_name: str,
+    ) -> List[Tuple[str, str]]:
+        """
+        entity_ref 维度投影规范：
+        1. 有 expression 时优先使用 expression，适合 CASE WHEN / 业务映射
+        2. 没 expression 时再展开 select_fields
+        3. 都没有时兜底为 join_alias.name
+        """
+        join_alias = dim.join.alias if dim.join else ""
+        if dim.expression:
+            expr = dim.expression.replace("{fact_alias}", group.primary_alias)
+            expr = expr.replace("{join_alias}", join_alias)
+            return [(expr, alias_name)]
+
+        if dim.select_fields:
+            cols: List[Tuple[str, str]] = []
+            for field in dim.select_fields:
+                cols.append(self._normalize_select_field(join_alias, field))
+            return cols
+
+        return [(f"{join_alias}.{dim.name}", alias_name)]
+
+    def _normalize_select_field(self, join_alias: str, field: str) -> Tuple[str, str]:
+        """
+        统一处理 select_fields:
+        - `store_type`
+        - `s_dim.store_type`
+        - `store_type AS type_name`
+        - `s_dim.store_type AS type_name`
+        """
+        field = (field or "").strip()
+        if not field:
+            return (f"{join_alias}.*", "*")
+        if re.search(r"\s+AS\s+", field, flags=re.IGNORECASE):
+            expr, alias = re.split(r"\s+AS\s+", field, maxsplit=1, flags=re.IGNORECASE)
+            expr = expr.strip()
+            alias = alias.strip()
+            if "." not in expr:
+                expr = f"{join_alias}.{expr}"
+            return (expr, alias)
+        if "." in field:
+            return (field, field.split(".")[-1])
+        return (f"{join_alias}.{field}", field)
 
     def _metric_expr(self, metric: MetricDef, fact_alias: str) -> str:
         if metric.metric_type == "ratio":

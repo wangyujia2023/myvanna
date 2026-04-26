@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     "langchain_fallback_enabled": False,
     "embedding_fallback_mode": "fail",  # "keyword" | "fail"
     "semantic_to_langchain_fallback_enabled": False,
+    "semantic_sql_rag_enabled": True,
     "initial_prompt": "",
     "prompt_versions": [],
     "active_prompt_version": "default",
@@ -43,6 +44,9 @@ def _normalize_prompt_config(config: dict) -> dict:
     )
     config["semantic_to_langchain_fallback_enabled"] = bool(
         config.get("semantic_to_langchain_fallback_enabled", False)
+    )
+    config["semantic_sql_rag_enabled"] = bool(
+        config.get("semantic_sql_rag_enabled", False)
     )
     prompt_versions = config.get("prompt_versions") or []
     initial_prompt = config.get("initial_prompt", "")

@@ -91,7 +91,15 @@ class DorisRetriever:
         *,
         content_type: str,
         top_k: int,
+        sources: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        params: list[Any] = [content_type, self._db_name]
+        source_clause = ""
+        if sources:
+            placeholders = ", ".join(["%s"] * len(sources))
+            source_clause = f" AND source IN ({placeholders})"
+            params.extend(sources)
+
         rows = self._vec.execute(
             f"""
             SELECT id, content_type, question, content, source, db_name, table_names,
@@ -100,10 +108,11 @@ class DorisRetriever:
             FROM vanna_store.vanna_embeddings
             WHERE content_type = %s
               AND (db_name = %s OR IFNULL(db_name, '') = '')
+              {source_clause}
             ORDER BY dist ASC
             LIMIT {top_k}
             """,
-            (content_type, self._db_name),
+            params,
         )
         return [r for r in rows if r.get("dist") is not None and r["dist"] < self._max_distance]
 
@@ -116,10 +125,17 @@ class DorisRetriever:
         *,
         content_type: str,
         top_k: int,
+        sources: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         # 取前 5 个有意义的词（过滤单字、标点）
         words = [w for w in re.split(r"[\s，。？！、,.\?!]+", query) if len(w) > 1][:5]
         if not words:
+            params: list[Any] = [content_type, self._db_name]
+            source_clause = ""
+            if sources:
+                placeholders = ", ".join(["%s"] * len(sources))
+                source_clause = f" AND source IN ({placeholders})"
+                params.extend(sources)
             # 无有效关键词 → 返回质量最高的 top_k 条
             return self._vec.execute(
                 f"""
@@ -128,10 +144,11 @@ class DorisRetriever:
                 FROM vanna_store.vanna_embeddings
                 WHERE content_type = %s
                   AND (db_name = %s OR IFNULL(db_name, '') = '')
+                  {source_clause}
                 ORDER BY quality_score DESC, use_count DESC
                 LIMIT {top_k}
                 """,
-                (content_type, self._db_name),
+                params,
             )
 
         # 构造 LIKE 条件：content 或（sql 类型时）question 任意包含一个关键词即命中
@@ -148,6 +165,11 @@ class DorisRetriever:
 
         where_kw = " OR ".join(like_clauses)
         params.extend([content_type, self._db_name])
+        source_clause = ""
+        if sources:
+            placeholders = ", ".join(["%s"] * len(sources))
+            source_clause = f" AND source IN ({placeholders})"
+            params.extend(sources)
 
         rows = self._vec.execute(
             f"""
@@ -157,6 +179,7 @@ class DorisRetriever:
             WHERE ({where_kw})
               AND content_type = %s
               AND (db_name = %s OR IFNULL(db_name, '') = '')
+              {source_clause}
             ORDER BY quality_score DESC, use_count DESC
             LIMIT {top_k}
             """,
@@ -181,6 +204,7 @@ class DorisRetriever:
         vec: Optional[List[float]],
         content_type: str,
         top_k: int | None = None,
+        sources: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         limit = top_k or self._top_k
         if vec is not None:
@@ -190,22 +214,43 @@ class DorisRetriever:
                 limit,
                 query[:120],
             )
-            return self._search_by_vec(vec, content_type=content_type, top_k=limit)
+            return self._search_by_vec(
+                vec,
+                content_type=content_type,
+                top_k=limit,
+                sources=sources,
+            )
         logger.warning(
             "[Retriever] search without embedding, downgrade to keyword content_type=%s top_k=%s query=%s",
             content_type,
             limit,
             query[:120],
         )
-        return self._search_by_keyword(query, content_type=content_type, top_k=limit)
+        return self._search_by_keyword(
+            query,
+            content_type=content_type,
+            top_k=limit,
+            sources=sources,
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # 各类型检索（Skill 调用层）
     # ─────────────────────────────────────────────────────────────────────────
     def retrieve_sql_examples(
-        self, query: str, *, vec: Optional[List[float]] = None, top_k: int | None = None
+        self,
+        query: str,
+        *,
+        vec: Optional[List[float]] = None,
+        top_k: int | None = None,
+        sources: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        return self.search(query, vec=vec, content_type="sql", top_k=top_k)
+        return self.search(
+            query,
+            vec=vec,
+            content_type="sql",
+            top_k=top_k,
+            sources=sources,
+        )
 
     def retrieve_ddl(
         self, query: str, *, vec: Optional[List[float]] = None, top_k: int | None = None

@@ -96,6 +96,54 @@ class SemanticParseAgent:
                 intent_plan=intent,
             )
 
+    def run_with_sql_rag(
+        self,
+        intent: IntentPlan,
+        sql_examples: Optional[List[Dict[str, Any]]] = None,
+    ) -> SemanticPlan:
+        question = intent.normalized_query or intent.raw_question
+
+        try:
+            candidate_metrics = self._recall_metrics(intent)
+            candidate_dims = self._recall_dimensions(intent)
+
+            plan = self._llm_map(
+                question,
+                intent,
+                candidate_metrics,
+                candidate_dims,
+                sql_examples=sql_examples or [],
+            )
+
+            plan.coverage_score = self._catalog.coverage_score(
+                plan.metrics, plan.dimensions
+            )
+            plan.intent_plan = intent
+            if plan.query_spec is None:
+                plan.query_spec = QuerySpec(
+                    metrics=list(plan.metrics),
+                    dimensions=list(plan.dimensions),
+                    filters=list(plan.filters),
+                    order_by=list(plan.order_by),
+                    limit=plan.limit,
+                    unresolved_parts=list(plan.unresolved_parts),
+                )
+            plan.query_spec = enrich_query_spec(question, intent, plan.query_spec)
+            self._normalize_comparison_metrics(plan)
+            plan.unresolved_parts = self._normalize_unresolved(
+                plan.unresolved_parts,
+                plan.query_spec,
+            )
+            plan.query_spec.unresolved_parts = list(plan.unresolved_parts)
+            return plan
+        except Exception as exc:
+            logger.warning(f"[SemanticParseAgent] 解析失败，降级: {exc}")
+            return SemanticPlan(
+                coverage_score=0.0,
+                unresolved_parts=[question],
+                intent_plan=intent,
+            )
+
     # ─────────────────────────────────────────────────────────────────────────
     # 内部：候选召回
     # ─────────────────────────────────────────────────────────────────────────
@@ -160,6 +208,7 @@ class SemanticParseAgent:
         intent: IntentPlan,
         candidate_metrics: List[str],
         candidate_dims: List[str],
+        sql_examples: Optional[List[Dict[str, Any]]] = None,
     ) -> SemanticPlan:
         """调用 LLM 从候选集中精确选出 metrics / dimensions / filters。"""
         logger.info(
@@ -167,7 +216,13 @@ class SemanticParseAgent:
             question[:80], candidate_metrics, candidate_dims,
         )
 
-        prompt = self._build_prompt(question, intent, candidate_metrics, candidate_dims)
+        prompt = self._build_prompt(
+            question,
+            intent,
+            candidate_metrics,
+            candidate_dims,
+            sql_examples=sql_examples or [],
+        )
         logger.debug("[SemanticParseAgent] prompt=\n%s", prompt)
 
         try:
@@ -194,16 +249,28 @@ class SemanticParseAgent:
         intent: IntentPlan,
         candidate_metrics: List[str],
         candidate_dims: List[str],
+        sql_examples: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         metrics_detail = self._catalog.metrics_summary(candidate_metrics)
         dims_detail = self._catalog.dimensions_summary(candidate_dims)
         time_note = f"\n已识别时间范围：{intent.time_hint}" if intent.time_hint else ""
+        sql_example_note = ""
+        if sql_examples:
+            lines = []
+            for idx, item in enumerate(sql_examples[:3], start=1):
+                lines.append(
+                    f"{idx}. 问题：{item.get('raw_question') or item.get('question', '')}\n"
+                    f"   模板：{item.get('canonical_question', '')}\n"
+                    f"   SQL：{item.get('sql_text') or item.get('content', '')}"
+                )
+            sql_example_note = "\n\n【历史正确 SQL 示例】\n" + "\n".join(lines)
 
         return (
             "你是一个语义解析模型，负责把用户问题映射到已知指标和维度。\n\n"
             f"【候选指标】\n{metrics_detail}\n\n"
             f"【候选维度】\n{dims_detail}\n"
             f"{time_note}\n\n"
+            f"{sql_example_note}\n"
             "请从候选集中选出最合适的指标和维度，输出 JSON，字段说明：\n"
             "  metrics    : 选用的指标 name 列表（严格使用上面给出的 name）\n"
             "  dimensions : 选用的维度 name 列表（严格使用上面给出的 name）\n"
@@ -383,11 +450,34 @@ class SemanticParseAgent:
         spec = plan.query_spec
         if not spec or not spec.comparison or not spec.comparison.enabled:
             return
-        if len(plan.metrics) <= 1:
+        if not plan.metrics:
             return
-        kept: List[str] = []
+
+        normalized: List[str] = []
+        remapped: Dict[str, str] = {}
         dropped: List[str] = []
+
         for name in plan.metrics:
+            base_name = self._resolve_base_metric_for_comparison(name)
+            if base_name and base_name != name:
+                remapped[name] = base_name
+                name = base_name
+            if name not in normalized:
+                normalized.append(name)
+
+        plan.metrics = normalized
+        spec.metrics = list(normalized)
+
+        if len(plan.metrics) <= 1:
+            if remapped:
+                logger.info(
+                    "[SemanticParseAgent] comparison 场景将派生指标回落到基础指标=%s",
+                    remapped,
+                )
+            return
+
+        kept: List[str] = []
+        for name in normalized:
             metric = self._catalog.get_metric(name)
             label = metric.label if metric else name
             key = f"{name} {label}".lower()
@@ -397,9 +487,83 @@ class SemanticParseAgent:
             kept.append(name)
         if kept and dropped:
             logger.info(
-                "[SemanticParseAgent] comparison 场景移除派生指标=%s，保留基础指标=%s",
+                "[SemanticParseAgent] comparison 场景归一化指标 | remapped=%s | dropped=%s | kept=%s",
+                remapped,
                 dropped,
                 kept,
             )
             plan.metrics = kept
             spec.metrics = list(kept)
+        elif remapped:
+            logger.info(
+                "[SemanticParseAgent] comparison 场景将派生指标回落到基础指标=%s",
+                remapped,
+            )
+
+    def _resolve_base_metric_for_comparison(self, metric_name: str) -> str:
+        metric = self._catalog.get_metric(metric_name)
+        if not metric:
+            return metric_name
+
+        key = f"{metric.name} {metric.label}".lower()
+        if not any(token in key for token in ["growth", "rate", "ratio", "yoy", "mom", "wow", "增", "环比", "同比", "增长"]):
+            return metric_name
+
+        direct_candidates = self._candidate_metric_names(metric.name)
+        direct_candidates.extend(self._candidate_metric_names(metric.label))
+
+        for candidate in direct_candidates:
+            if candidate != metric_name and self._catalog.get_metric(candidate):
+                return candidate
+
+        normalized_metric_name = self._normalized_metric_key(metric.name)
+        normalized_label = self._normalized_metric_key(metric.label)
+
+        for candidate_name, candidate_metric in self._catalog._metrics.items():
+            if candidate_name == metric_name:
+                continue
+            candidate_key = self._normalized_metric_key(candidate_name)
+            candidate_label = self._normalized_metric_key(candidate_metric.label)
+            if not candidate_key and not candidate_label:
+                continue
+            if normalized_metric_name and candidate_key and normalized_metric_name == candidate_key:
+                return candidate_name
+            if normalized_label and candidate_label and normalized_label == candidate_label:
+                return candidate_name
+            if normalized_label and candidate_key and normalized_label == candidate_key:
+                return candidate_name
+            if normalized_metric_name and candidate_label and normalized_metric_name == candidate_label:
+                return candidate_name
+
+        return metric_name
+
+    def _candidate_metric_names(self, value: str) -> List[str]:
+        raw = (value or "").strip()
+        if not raw:
+            return []
+
+        patterns = [
+            r"(_?(growth|rate|ratio|yoy|mom|wow))+$",
+            r"(同比增长率|同比增长|同比|环比增长率|环比增长|环比|增长率|增长|比率|占比|率)$",
+        ]
+        candidates: List[str] = []
+        current = raw
+        for pattern in patterns:
+            updated = re.sub(pattern, "", current, flags=re.IGNORECASE).strip(" _-")
+            if updated and updated != current:
+                candidates.append(updated)
+                current = updated
+        return candidates
+
+    def _normalized_metric_key(self, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"(_?(growth|rate|ratio|yoy|mom|wow))+$", "", cleaned)
+        cleaned = re.sub(
+            r"(同比增长率|同比增长|同比|环比增长率|环比增长|环比|增长率|增长|比率|占比|率)$",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", cleaned)
+        return cleaned

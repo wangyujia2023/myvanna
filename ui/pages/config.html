@@ -67,6 +67,14 @@
           </label>
           <div class="form-hint">默认关闭。关闭后，即使 coverage 偏低也继续走 Semantic 路径，便于调试语义规划效果。</div>
         </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label">Semantic 正确 SQL RAG 开关</label>
+          <label style="display:flex;align-items:center;gap:10px;color:var(--text2);font-size:13px">
+            <input id="cfg-semantic-sql-rag" type="checkbox">
+            允许 Semantic 调用“已验证正确 SQL”召回增强语义解析
+          </label>
+          <div class="form-hint">默认关闭。开启后，语义层会沿用 LangChain 的 SQLExampleSkill，仅召回 source=feedback / feedback_corrected 的高质量 SQL 作为辅助上下文。</div>
+        </div>
       </div>
     </div>
 
