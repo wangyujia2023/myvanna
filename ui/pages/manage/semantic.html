@@ -6,5 +6,7 @@
             <option value="business">业务域</option>
           </select>
           <button class="btn btn-secondary" onclick="loadSemanticList()">🔄 刷新</button>
+          <button class="btn btn-secondary" onclick="refreshSemanticCache()">🧠 刷新语义内存</button>
+          <span id="sem-cache-msg" style="font-size:12px;color:var(--text3)"></span>
           <span id="sem-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
         </div>

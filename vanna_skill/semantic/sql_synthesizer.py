@@ -112,7 +112,7 @@ class SQLSynthesizer:
             "where_clauses": where_clauses,
             "group_by_cols": group_by_cols,
             "order_by_cols": order_by_cols,
-            "limit": task.limit or 20,
+            "limit": None if (not group_by_cols and not order_by_cols) else (task.limit or 20),
         }
 
     # ── 主表选取 ──────────────────────────────────────────────────────────────
@@ -355,7 +355,8 @@ class SQLSynthesizer:
             lines.append(f"ORDER BY {order_str}")
 
         # LIMIT
-        lines.append(f"LIMIT  {ctx['limit']}")
+        if ctx["limit"]:
+            lines.append(f"LIMIT  {ctx['limit']}")
 
         return "\n".join(lines)
 

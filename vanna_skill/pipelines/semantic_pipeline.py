@@ -131,6 +131,7 @@ class SemanticPipeline:
             self._semantic_fallback_enabled,
             self._config.get("model", "qwen-plus"),
         )
+        self._catalog.refresh_from_db(required=True)
 
         try:
             result = self._execute(question, trace, notify)
@@ -210,6 +211,23 @@ class SemanticPipeline:
             "coverage_score": sp.coverage_score,
             "fallback_threshold": THRESHOLD_HYBRID,
             "semantic_fallback_enabled": self._semantic_fallback_enabled,
+            "analysis_type": sp.query_spec.analysis_type if sp.query_spec else "",
+            "time_scope": (
+                {
+                    "start": sp.query_spec.time_scope.start,
+                    "end": sp.query_spec.time_scope.end,
+                    "label": sp.query_spec.time_scope.label,
+                }
+                if sp.query_spec and sp.query_spec.time_scope else {}
+            ),
+            "comparison": (
+                {
+                    "mode": sp.query_spec.comparison.mode,
+                    "compare_start": sp.query_spec.comparison.compare_start,
+                    "compare_end": sp.query_spec.comparison.compare_end,
+                }
+                if sp.query_spec and sp.query_spec.comparison and sp.query_spec.comparison.enabled else {}
+            ),
             "unresolved": sp.unresolved_parts,
         })
         notify("step_done", step.to_dict())
@@ -290,6 +308,7 @@ class SemanticPipeline:
             sqls.append(sql)
 
         final_sql = sqls[0] if sqls else ""
+        logger.info("[SemanticPipeline] generated_sql:\n%s", final_sql or "-- empty --")
 
         trace.finish(
             sql=final_sql,

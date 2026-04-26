@@ -17,8 +17,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-from ..semantic.models import IntentPlan, QueryTask, SemanticPlan
-from ..semantic.sql_synthesizer import SQLSynthesizer
+from ..semantic.models import IntentPlan, QuerySpec, QueryTask, SemanticPlan
+from ..semantic.sql_compiler import SemanticSQLCompiler
 
 if TYPE_CHECKING:
     from ..semantic.catalog import SemanticCatalog
@@ -50,7 +50,7 @@ class SQLGeneratorSemanticAgent:
         self._llm = llm
         self._catalog = catalog
         self._guard = guard
-        self._synthesizer = SQLSynthesizer()
+        self._compiler = SemanticSQLCompiler()
 
     # ─────────────────────────────────────────────────────────────────────────
     # 公共入口
@@ -96,6 +96,9 @@ class SQLGeneratorSemanticAgent:
                 "[SQLGenSemantic] → LLM路径（unresolved_parts=%s）", sp.unresolved_parts
             )
             return True
+        if not task.query_spec:
+            logger.info("[SQLGenSemantic] → LLM路径（缺少 QuerySpec）")
+            return True
         if sp.coverage_score < 0.5:
             logger.info(
                 "[SQLGenSemantic] → LLM路径（coverage_score=%.2f < 0.5）", sp.coverage_score
@@ -133,20 +136,26 @@ class SQLGeneratorSemanticAgent:
         missing_dims = [n for n, d in zip(task.dimensions, dimensions) if d is None]
         dimensions = [d for d in dimensions if d is not None]
 
-        # 从 intent 提取时间范围（如果调用方没传）
-        if time_range is None:
-            time_range = self._extract_time_range(sp)
-
         logger.info(
             "[SQLGenSemantic] 模板路径 | metrics=%s | missing_metrics=%s | "
-            "dims=%s | missing_dims=%s | time_range=%s",
+            "dims=%s | missing_dims=%s | analysis=%s | time_scope=%s | comparison=%s",
             [m.name for m in metrics], missing_metrics,
             [d.name for d in dimensions], missing_dims,
-            time_range,
+            task.query_spec.analysis_type if task.query_spec else "",
+            task.query_spec.time_scope if task.query_spec else None,
+            task.query_spec.comparison if task.query_spec else None,
         )
 
         try:
-            sql = self._synthesizer.synthesize(task, metrics, dimensions, time_range)
+            query_spec = task.query_spec or QuerySpec(
+                metrics=[m.name for m in metrics],
+                dimensions=[d.name for d in dimensions],
+                filters=list(task.filters),
+                order_by=list(task.order_by),
+                limit=task.limit,
+                unresolved_parts=list(sp.unresolved_parts),
+            )
+            sql = self._compiler.compile(query_spec, metrics, dimensions)
             logger.info("[SQLGenSemantic] 模板合成成功 | sql=\n%s", sql)
         except Exception as exc:
             logger.error("[SQLGenSemantic] 模板合成失败: %s，回退 LLM 路径", exc)
@@ -161,7 +170,7 @@ class SQLGeneratorSemanticAgent:
 
         return {
             "sql": sql,
-            "path": "semantic_template",
+            "path": "semantic_template_v2",
             "guard_ok": guard_ok,
             "guard_reason": guard_reason,
             "attempts": 1,
@@ -362,29 +371,27 @@ class SQLGeneratorSemanticAgent:
         从 sp.filters 或 intent.time_hint 推断 (start, end) 日期元组。
         返回 None 表示无法推断。
         """
-        # 优先从 filters 中找 BETWEEN 时间条件
+        # 优先从 intent.time_hint 解析，避免被 LLM 自行臆测的时间 filters 干扰
+        intent = sp.intent_plan
+        if intent and intent.time_hint:
+            hint = intent.time_hint
+            # "2026-04" → 月份范围
+            month_m = re.match(r"^(\d{4})-(\d{2})$", hint)
+            if month_m:
+                y, mo = int(month_m.group(1)), int(month_m.group(2))
+                import calendar
+                last_day = calendar.monthrange(y, mo)[1]
+                return f"{y}-{mo:02d}-01", f"{y}-{mo:02d}-{last_day:02d}"
+
+            # "2026" → 年度范围
+            year_m = re.match(r"^(\d{4})$", hint)
+            if year_m:
+                y = year_m.group(1)
+                return f"{y}-01-01", f"{y}-12-31"
+
+        # 没有可确定 time_hint 时，再从 filters 中找 BETWEEN 时间条件
         for f in sp.filters:
             if f.operator == "BETWEEN" and f.value and f.value2:
                 return str(f.value), str(f.value2)
-
-        # 从 time_hint 解析
-        intent = sp.intent_plan
-        if not intent or not intent.time_hint:
-            return None
-
-        hint = intent.time_hint
-        # "2026-04" → 月份范围
-        month_m = re.match(r"^(\d{4})-(\d{2})$", hint)
-        if month_m:
-            y, mo = int(month_m.group(1)), int(month_m.group(2))
-            import calendar
-            last_day = calendar.monthrange(y, mo)[1]
-            return f"{y}-{mo:02d}-01", f"{y}-{mo:02d}-{last_day:02d}"
-
-        # "2026" → 年度范围
-        year_m = re.match(r"^(\d{4})$", hint)
-        if year_m:
-            y = year_m.group(1)
-            return f"{y}-01-01", f"{y}-12-31"
 
         return None

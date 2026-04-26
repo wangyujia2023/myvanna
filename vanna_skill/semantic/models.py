@@ -199,6 +199,46 @@ class FilterCondition:
 
 
 @dataclass
+class TimeScope:
+    """标准化时间范围。"""
+    scope_type: str = ""               # day | month | year | range | recent_days | quarter
+    grain: str = ""                    # day | month | year
+    start: str = ""
+    end: str = ""
+    label: str = ""
+    raw_text: str = ""
+
+
+@dataclass
+class ComparisonSpec:
+    """对比/增长分析定义。"""
+    mode: str = ""                     # none | mom | yoy | wow | previous_period
+    enabled: bool = False
+    compare_start: str = ""
+    compare_end: str = ""
+    output_style: str = "growth_rate"  # growth_rate | delta | both
+    label: str = ""
+
+
+@dataclass
+class QuerySpec:
+    """
+    SQL 编译器直接消费的结构化查询规范。
+    LLM 只负责填槽位，不负责生成 SQL。
+    """
+    metrics: List[str] = field(default_factory=list)
+    dimensions: List[str] = field(default_factory=list)
+    filters: List[FilterCondition] = field(default_factory=list)
+    order_by: List[Dict[str, str]] = field(default_factory=list)
+    limit: Optional[int] = 20
+    analysis_type: str = "aggregate"  # aggregate | compare | trend | ranking
+    time_scope: Optional[TimeScope] = None
+    comparison: Optional[ComparisonSpec] = None
+    unresolved_parts: List[str] = field(default_factory=list)
+    notes: List[str] = field(default_factory=list)
+
+
+@dataclass
 class SemanticPlan:
     """
     SemanticParseAgent 输出：把自然语言映射成结构化语义查询
@@ -217,6 +257,7 @@ class SemanticPlan:
     # 未能映射到任何已知指标/维度的片段，供 LLM 兜底路径使用
 
     intent_plan: Optional[IntentPlan] = None
+    query_spec: Optional[QuerySpec] = None
 
 
 @dataclass
@@ -233,6 +274,7 @@ class QueryTask:
     filters: List[FilterCondition] = field(default_factory=list)
     order_by: List[Dict[str, str]] = field(default_factory=list)
     limit: int = 20
+    query_spec: Optional[QuerySpec] = None
 
     depends_on: List[str] = field(default_factory=list)    # 上游 task_id
     description: str = ""

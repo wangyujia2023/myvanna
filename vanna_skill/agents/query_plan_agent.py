@@ -76,12 +76,13 @@ class QueryPlanAgent:
         # 将 SemanticPlan 的 filters 直接透传
         task = QueryTask(
             task_id="t1",
-            task_type="sql_query",
+            task_type=self._infer_task_type(sp),
             metrics=list(sp.metrics),
             dimensions=list(sp.dimensions),
             filters=list(sp.filters),
             order_by=list(sp.order_by),
             limit=sp.limit or 20,
+            query_spec=sp.query_spec,
             depends_on=[],
             description=self._describe(sp),
         )
@@ -99,6 +100,16 @@ class QueryPlanAgent:
         metrics_str = ", ".join(sp.metrics) if sp.metrics else "（无指标）"
         dims_str = ", ".join(sp.dimensions) if sp.dimensions else "（无维度）"
         return f"查询 {metrics_str} 按 {dims_str}" + (f" | {question[:40]}" if question else "")
+
+    def _infer_task_type(self, sp: SemanticPlan) -> str:
+        spec = sp.query_spec
+        if spec and spec.comparison and spec.comparison.enabled:
+            return "compare"
+        if spec and spec.analysis_type == "trend":
+            return "trend"
+        if spec and spec.analysis_type == "ranking":
+            return "ranking"
+        return "sql_query"
 
     # ─────────────────────────────────────────────────────────────────────────
     # 内部：attribution 计划（Phase 2 预留）

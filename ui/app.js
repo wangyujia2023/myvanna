@@ -168,6 +168,23 @@ async function loadSemanticList(){
   }
 }
 
+async function refreshSemanticCache(){
+  const msg = document.getElementById('sem-cache-msg');
+  if(msg) msg.textContent = '刷新中…';
+  try {
+    const result = await apiFetch('/semantic/cache/refresh', {method:'POST'});
+    const s = result.stats || {};
+    if(msg){
+      msg.textContent = `已刷新：指标 ${s.metrics||0} · 维度 ${s.dimensions||0} · 实体 ${s.entities||0} · 业务域 ${s.businesses||0}`;
+    }
+    toast('语义内存已刷新');
+    loadSemanticList();
+  } catch(e){
+    if(msg) msg.textContent = '刷新失败';
+    toast('刷新语义内存失败: '+e.message, 'error');
+  }
+}
+
 async function deleteSemanticNode(type, name){
   if(!confirm(`确认删除 ${type}：${name}？`)) return;
   try {

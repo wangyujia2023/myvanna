@@ -18,7 +18,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..semantic.models import FilterCondition, IntentPlan, SemanticPlan
+from ..semantic.models import FilterCondition, IntentPlan, QuerySpec, SemanticPlan
+from ..semantic.time_compiler import enrich_query_spec
 
 if TYPE_CHECKING:
     from ..semantic.catalog import SemanticCatalog
@@ -69,6 +70,22 @@ class SemanticParseAgent:
                 plan.metrics, plan.dimensions
             )
             plan.intent_plan = intent
+            if plan.query_spec is None:
+                plan.query_spec = QuerySpec(
+                    metrics=list(plan.metrics),
+                    dimensions=list(plan.dimensions),
+                    filters=list(plan.filters),
+                    order_by=list(plan.order_by),
+                    limit=plan.limit,
+                    unresolved_parts=list(plan.unresolved_parts),
+                )
+            plan.query_spec = enrich_query_spec(question, intent, plan.query_spec)
+            self._normalize_comparison_metrics(plan)
+            plan.unresolved_parts = self._normalize_unresolved(
+                plan.unresolved_parts,
+                plan.query_spec,
+            )
+            plan.query_spec.unresolved_parts = list(plan.unresolved_parts)
             return plan
 
         except Exception as exc:
@@ -193,6 +210,8 @@ class SemanticParseAgent:
             "  filters    : 过滤条件列表，每项 {column, operator, value}，"
             "               operator 可选 = / >= / <= / BETWEEN / IN / LIKE\n"
             "               BETWEEN 时额外加 value2 字段\n"
+            "               column 优先使用候选维度 name，不要发明 time/date/日期 这类泛化列名；\n"
+            "               时间范围、同比、环比不要放进 filters，由系统编译器统一处理。\n"
             "  order_by   : 排序列表，每项 {field, direction}，direction=ASC/DESC\n"
             "  limit      : 返回行数，默认 20\n"
             "  unresolved : 无法映射的片段列表（没有则空数组）\n"
@@ -210,8 +229,14 @@ class SemanticParseAgent:
         """把 LLM 返回 dict 转成 SemanticPlan，做安全校验。"""
         # 指标：只保留 catalog 中存在的名称（防止 LLM 幻觉）
         raw_metrics: List[str] = data.get("metrics", [])
-        metrics = [m for m in raw_metrics if self._catalog.get_metric(m) is not None]
-        hallucinated_metrics = [m for m in raw_metrics if m not in metrics]
+        metrics = []
+        resolved_metric_map = {}
+        for m in raw_metrics:
+            resolved = self._resolve_metric_name(m)
+            if resolved and resolved not in metrics:
+                metrics.append(resolved)
+            resolved_metric_map[m] = resolved
+        hallucinated_metrics = [m for m in raw_metrics if not resolved_metric_map.get(m)]
         if hallucinated_metrics:
             logger.warning(
                 "[SemanticParseAgent] LLM返回了不在catalog中的指标（已过滤）: %s",
@@ -220,8 +245,14 @@ class SemanticParseAgent:
 
         # 维度：只保留 catalog 中存在的名称（防止 LLM 幻觉）
         raw_dims: List[str] = data.get("dimensions", [])
-        dimensions = [d for d in raw_dims if self._catalog.get_dimension(d) is not None]
-        hallucinated_dims = [d for d in raw_dims if d not in dimensions]
+        dimensions = []
+        resolved_dim_map = {}
+        for d in raw_dims:
+            resolved = self._resolve_dimension_name(d)
+            if resolved and resolved not in dimensions:
+                dimensions.append(resolved)
+            resolved_dim_map[d] = resolved
+        hallucinated_dims = [d for d in raw_dims if not resolved_dim_map.get(d)]
         if hallucinated_dims:
             logger.warning(
                 "[SemanticParseAgent] LLM返回了不在catalog中的维度（已过滤）: %s",
@@ -230,11 +261,29 @@ class SemanticParseAgent:
 
         # filters
         filters: List[FilterCondition] = []
+        metric_time_column = ""
+        for m_name in metrics:
+            metric = self._catalog.get_metric(m_name)
+            if metric and metric.time_column:
+                metric_time_column = metric.time_column
+                break
+
         for f in data.get("filters", []):
             if isinstance(f, dict) and "column" in f:
                 try:
+                    column = str(f["column"])
+                    if (
+                        metric_time_column
+                        and column.strip().lower() in {"time", "date", "日期", "时间"}
+                    ):
+                        logger.info(
+                            "[SemanticParseAgent] 将泛化时间字段 %r 规范化为 %r",
+                            column,
+                            metric_time_column,
+                        )
+                        column = metric_time_column
                     filters.append(FilterCondition(
-                        column=str(f["column"]),
+                        column=column,
                         operator=str(f.get("operator", "=")),
                         value=f.get("value"),
                         value2=f.get("value2"),
@@ -262,6 +311,15 @@ class SemanticParseAgent:
         if not metrics and not dimensions:
             unresolved.append(question)
 
+        query_spec = QuerySpec(
+            metrics=list(metrics),
+            dimensions=list(dimensions),
+            filters=list(filters),
+            order_by=list(order_by),
+            limit=limit,
+            unresolved_parts=list(unresolved),
+        )
+
         logger.info(
             "[SemanticParseAgent] SemanticPlan结果 | metrics=%s | dims=%s | "
             "filters=%d | unresolved=%s",
@@ -275,4 +333,73 @@ class SemanticParseAgent:
             order_by=order_by,
             limit=limit,
             unresolved_parts=unresolved,
+            query_spec=query_spec,
         )
+
+    def _resolve_metric_name(self, raw_name: str) -> str:
+        raw = (raw_name or "").strip()
+        if not raw:
+            return ""
+        if self._catalog.get_metric(raw):
+            return raw
+        raw_l = raw.lower()
+        for name, metric in self._catalog._metrics.items():
+            candidates = [name, metric.label] + list(metric.synonyms)
+            if any(raw_l == str(c).strip().lower() for c in candidates if c):
+                return name
+        return ""
+
+    def _resolve_dimension_name(self, raw_name: str) -> str:
+        raw = (raw_name or "").strip()
+        if not raw:
+            return ""
+        if self._catalog.get_dimension(raw):
+            return raw
+        raw_l = raw.lower()
+        for name, dim in self._catalog._dimensions.items():
+            candidates = [name, dim.label] + list(dim.synonyms)
+            if any(raw_l == str(c).strip().lower() for c in candidates if c):
+                return name
+        return ""
+
+    def _normalize_unresolved(
+        self, unresolved: List[str], query_spec: QuerySpec
+    ) -> List[str]:
+        if not unresolved:
+            return []
+        normalized: List[str] = []
+        for item in unresolved:
+            token = (item or "").strip()
+            if not token:
+                continue
+            if query_spec.time_scope and any(k in token for k in ["昨天", "昨日", "今天", "今日", "本月", "上月", "今年", "去年", "季度", "月份", "4月", "时间"]):
+                continue
+            if query_spec.comparison and query_spec.comparison.enabled and any(k in token for k in ["环比", "同比", "同期", "增长", "增长率"]):
+                continue
+            normalized.append(token)
+        return normalized
+
+    def _normalize_comparison_metrics(self, plan: SemanticPlan) -> None:
+        spec = plan.query_spec
+        if not spec or not spec.comparison or not spec.comparison.enabled:
+            return
+        if len(plan.metrics) <= 1:
+            return
+        kept: List[str] = []
+        dropped: List[str] = []
+        for name in plan.metrics:
+            metric = self._catalog.get_metric(name)
+            label = metric.label if metric else name
+            key = f"{name} {label}".lower()
+            if any(token in key for token in ["growth", "rate", "ratio", "yoy", "mom", "wow", "增", "环比", "同比", "增长"]):
+                dropped.append(name)
+                continue
+            kept.append(name)
+        if kept and dropped:
+            logger.info(
+                "[SemanticParseAgent] comparison 场景移除派生指标=%s，保留基础指标=%s",
+                dropped,
+                kept,
+            )
+            plan.metrics = kept
+            spec.metrics = list(kept)

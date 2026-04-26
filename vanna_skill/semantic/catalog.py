@@ -42,6 +42,10 @@ _catalog_instance: Optional["SemanticCatalog"] = None
 _catalog_lock = threading.Lock()
 
 
+def _compact_sql(sql: str) -> str:
+    return " ".join((sql or "").split())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 公共接口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,6 +230,26 @@ class SemanticCatalog:
         logger.info("[SemanticCatalog] 已从 YAML 重新加载")
         return self
 
+    def refresh_from_db(self, required: bool = False) -> "SemanticCatalog":
+        """
+        强制从 semantic_store 重新加载到内存。
+        required=True 时，如果 DB 中没有语义定义则抛错，不再回退 YAML。
+        """
+        loaded = self._load_from_db()
+        self._build_synonym_index()
+        if required and not loaded:
+            raise ValueError(
+                f"semantic_store 中没有找到 db_name={self._db_name} 的语义定义"
+            )
+        logger.info(
+            "[SemanticCatalog] 已从 DB 刷新 entity=%d dim=%d metric=%d business=%d",
+            len(self._entities),
+            len(self._dimensions),
+            len(self._metrics),
+            len(self._businesses),
+        )
+        return self
+
     # ── DB 读取（4 张表分别查询）──────────────────────────────────────────────
 
     def _load_from_db(self) -> bool:
@@ -243,8 +267,7 @@ class SemanticCatalog:
         )
 
     def _load_entities_from_db(self) -> Dict[str, EntityDef]:
-        rows = self._sem.execute(
-            """
+        sql = """
             SELECT name, label, description,
                    primary_table, primary_key, display_key,
                    searchable_fields_json, synonyms, tags
@@ -252,9 +275,9 @@ class SemanticCatalog:
             WHERE is_active = 1
               AND (db_name = %s OR IFNULL(db_name,'') = '')
             ORDER BY name
-            """,
-            (self._db_name,),
-        )
+            """
+        logger.info("[SemanticCatalog] DB query[entities]: %s | args=%s", _compact_sql(sql), (self._db_name,))
+        rows = self._sem.execute(sql, (self._db_name,))
         result: Dict[str, EntityDef] = {}
         for r in rows:
             try:
@@ -275,8 +298,7 @@ class SemanticCatalog:
         return result
 
     def _load_dimensions_from_db(self) -> Dict[str, DimensionDef]:
-        rows = self._sem.execute(
-            """
+        sql = """
             SELECT name, label, description, dim_type, entity, grain,
                    expression, alias,
                    join_table, join_alias, join_type, join_on,
@@ -285,9 +307,9 @@ class SemanticCatalog:
             WHERE is_active = 1
               AND (db_name = %s OR IFNULL(db_name,'') = '')
             ORDER BY name
-            """,
-            (self._db_name,),
-        )
+            """
+        logger.info("[SemanticCatalog] DB query[dimensions]: %s | args=%s", _compact_sql(sql), (self._db_name,))
+        rows = self._sem.execute(sql, (self._db_name,))
         result: Dict[str, DimensionDef] = {}
         for r in rows:
             try:
@@ -319,8 +341,7 @@ class SemanticCatalog:
         return result
 
     def _load_metrics_from_db(self) -> Dict[str, MetricDef]:
-        rows = self._sem.execute(
-            """
+        sql = """
             SELECT name, label, description, metric_type, complexity,
                    expression, primary_table, primary_alias,
                    extra_joins_json, time_column,
@@ -331,9 +352,9 @@ class SemanticCatalog:
             WHERE is_active = 1
               AND (db_name = %s OR IFNULL(db_name,'') = '')
             ORDER BY name
-            """,
-            (self._db_name,),
-        )
+            """
+        logger.info("[SemanticCatalog] DB query[metrics]: %s | args=%s", _compact_sql(sql), (self._db_name,))
+        rows = self._sem.execute(sql, (self._db_name,))
         result: Dict[str, MetricDef] = {}
         for r in rows:
             try:
@@ -371,8 +392,7 @@ class SemanticCatalog:
         return result
 
     def _load_businesses_from_db(self) -> Dict[str, BusinessDef]:
-        rows = self._sem.execute(
-            """
+        sql = """
             SELECT name, label, description,
                    related_metrics_json, related_dimensions_json,
                    typical_questions_json, default_dimensions_json,
@@ -381,9 +401,9 @@ class SemanticCatalog:
             WHERE is_active = 1
               AND (db_name = %s OR IFNULL(db_name,'') = '')
             ORDER BY name
-            """,
-            (self._db_name,),
-        )
+            """
+        logger.info("[SemanticCatalog] DB query[businesses]: %s | args=%s", _compact_sql(sql), (self._db_name,))
+        rows = self._sem.execute(sql, (self._db_name,))
         result: Dict[str, BusinessDef] = {}
         for r in rows:
             try:

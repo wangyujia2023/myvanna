@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..semantic.models import IntentPlan
@@ -43,6 +44,10 @@ _DDL_PATTERN = re.compile(
 
 # 正则：时间提示识别（从用户问句中提取，供 SemanticParseAgent 使用）
 _TIME_PATTERNS: List[tuple] = [
+    # 今年4月 / 本年4月份 / 去年4月
+    (re.compile(r"(今年|本年|去年)\s*(\d{1,2})\s*月"), "relative_year_month"),
+    # 4月 / 4月份（默认按当前年份理解）
+    (re.compile(r"(?<!\d)(\d{1,2})\s*月(?:份)?"), "month_only"),
     # 具体月份 2026-04 / 2026年4月
     (re.compile(r"(\d{4})[-年](\d{1,2})(?:月|$)"), "month"),
     # 具体年份 2026年
@@ -112,9 +117,17 @@ class IntentUnderstandingAgent:
 
     def _extract_time_hint(self, question: str) -> str:
         """从问句中提取时间提示字符串，如 '2026-04' / '最近30天'。"""
+        now = datetime.now()
         for pattern, hint_type in _TIME_PATTERNS:
             m = pattern.search(question)
             if m:
+                if hint_type == "relative_year_month":
+                    base_year = now.year
+                    if m.group(1) == "去年":
+                        base_year -= 1
+                    return f"{base_year}-{int(m.group(2)):02d}"
+                if hint_type == "month_only":
+                    return f"{now.year}-{int(m.group(1)):02d}"
                 if hint_type == "month":
                     return f"{m.group(1)}-{int(m.group(2)):02d}"
                 if hint_type == "year":

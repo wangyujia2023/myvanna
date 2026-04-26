@@ -1,520 +1,489 @@
-# # =============================================================================
-# # 零售数仓语义目录  retail_dw
-# # 维护说明：
-# #   - 修改此文件后，执行 POST /semantic/reload 或重启服务生效
-# #   - synonyms 字段支持用户用不同说法命中同一指标/维度，用逗号分隔
-# #   - compatible_dimensions 限定该指标可以按哪些维度切割
-# # =============================================================================
-
-# version: "1.0"
-# db_name: retail_dw
-
-
-# # =============================================================================
-# # 实体（Entity）：业务中的核心对象
-# # =============================================================================
-# entities:
-
-#   - name: store
-#     label: 门店
-#     description: 线上或线下销售门店，包含门店基本信息
-#     primary_table: dim_store_info
-#     primary_key: store_id
-#     display_key: store_name
-#     searchable_fields: [store_name, city, region, store_type]
-#     synonyms: [门店,店铺,渠道,网店,实体店]
-#     tags: [core]
-
-#   - name: sku
-#     label: 商品
-#     description: 最小销售单元，包含商品名称、品类等信息
-#     primary_table: dim_sku_info
-#     primary_key: sku_id
-#     display_key: sku_name
-#     searchable_fields: [sku_name, category_1_name, category_2_name, brand_name]
-#     synonyms: [商品,SKU,产品,货品,单品]
-#     tags: [core]
-
-#   - name: user
-#     label: 用户
-#     description: 消费用户，包含 VIP 等级、注册信息等
-#     primary_table: dim_user_info
-#     primary_key: user_id
-#     display_key: user_id
-#     searchable_fields: [is_plus_vip, user_level, register_channel]
-#     synonyms: [用户,买家,消费者,客户,会员]
-#     tags: [core]
-
-#   - name: order
-#     label: 订单
-#     description: 交易订单主体，宽表包含金额、退款、优惠等信息
-#     primary_table: dwd_trade_order_wide
-#     primary_key: order_id
-#     display_key: order_id
-#     synonyms: [订单,交易,单子]
-#     tags: [core, transaction]
-
-
-# # =============================================================================
-# # 维度（Dimension）：分析视角
-# # =============================================================================
-# dimensions:
-
-#   # ── 时间维度 ──────────────────────────────────────────────────────────────
-
-#   - name: time_day
-#     label: 日期
-#     description: 按天分析
-#     dim_type: time
-#     grain: day
-#     expression: "{time_col}"
-#     alias: stat_day
-#     synonyms: [日期,天,按天,每天,每日]
-#     tags: [time]
-
-#   - name: time_month
-#     label: 月份
-#     description: 按自然月分析
-#     dim_type: time
-#     grain: month
-#     expression: "DATE_FORMAT({time_col}, '%Y-%m')"
-#     alias: stat_month
-#     synonyms: [月份,月,按月,每月,月度]
-#     tags: [time]
-
-#   - name: time_quarter
-#     label: 季度
-#     description: 按季度分析
-#     dim_type: time
-#     grain: quarter
-#     expression: "CONCAT(YEAR({time_col}), '-Q', QUARTER({time_col}))"
-#     alias: stat_quarter
-#     synonyms: [季度,季,按季,每季]
-#     tags: [time]
-
-#   - name: time_year
-#     label: 年份
-#     description: 按年分析
-#     dim_type: time
-#     grain: year
-#     expression: "YEAR({time_col})"
-#     alias: stat_year
-#     synonyms: [年份,年,按年,每年,年度]
-#     tags: [time]
-
-#   # ── 实体引用维度 ──────────────────────────────────────────────────────────
-
-#   - name: store_dim
-#     label: 门店维度
-#     description: 按门店分组，包含门店名称、城市、区域
-#     dim_type: entity_ref
-#     entity: store
-#     join:
-#       table: dim_store_info
-#       alias: ds
-#       join_type: LEFT JOIN
-#       on: "{fact_alias}.store_id = ds.store_id"
-#     select_fields: [store_name, city, region]
-#     synonyms: [门店,店铺,渠道,按门店,各门店,门店维度]
-#     tags: [store]
-
-#   - name: sku_dim
-#     label: 商品维度
-#     description: 按商品分组，包含商品名称、品类
-#     dim_type: entity_ref
-#     entity: sku
-#     join:
-#       table: dim_sku_info
-#       alias: dsku
-#       join_type: LEFT JOIN
-#       on: "{fact_alias}.sku_id = dsku.sku_id"
-#     select_fields: [sku_name, category_1_id, category_1_name, category_2_name]
-#     synonyms: [商品,SKU,产品,按商品,各商品,品类]
-#     tags: [sku]
-
-#   - name: category_dim
-#     label: 品类维度
-#     description: 按一级品类分组
-#     dim_type: entity_ref
-#     entity: sku
-#     join:
-#       table: dim_sku_info
-#       alias: dsku
-#       join_type: LEFT JOIN
-#       on: "{fact_alias}.sku_id = dsku.sku_id"
-#     select_fields: [category_1_id, category_1_name]
-#     synonyms: [品类,类目,一级品类,大类]
-#     tags: [sku]
-
-#   - name: user_type_dim
-#     label: 用户类型维度
-#     description: 按用户类型（VIP/普通）分组
-#     dim_type: entity_ref
-#     entity: user
-#     join:
-#       table: dim_user_info
-#       alias: u
-#       join_type: LEFT JOIN
-#       on: "{fact_alias}.user_id = u.user_id"
-#     select_fields: [is_plus_vip, user_level]
-#     synonyms: [用户类型,会员类型,VIP类型]
-#     tags: [user]
-
-
-# # =============================================================================
-# # 指标（Metric）：可度量的业务值
-# # =============================================================================
-# metrics:
-
-#   # ── 交易核心指标 ──────────────────────────────────────────────────────────
-
-#   - name: gmv
-#     label: GMV
-#     description: 商品交易总额，含退款未扣除
-#     metric_type: simple
-#     expression: "SUM({alias}.apportion_amt)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     time_column: "{alias}.dt"
-#     output_format: currency
-#     unit: 元
-#     compatible_dimensions: [time_day, time_month, time_quarter, time_year,
-#                             store_dim, sku_dim, category_dim]
-#     synonyms: [GMV,交易总额,销售总额,总销售额,营业额,交易金额]
-#     tags: [core, revenue]
-
-#   - name: net_revenue
-#     label: 净收入
-#     description: GMV 扣除退款金额后的净营收，反映实际收入
-#     metric_type: derived
-#     expression: "SUM(o.apportion_amt) - COALESCE(SUM(r.refund_amt), 0)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     extra_joins:
-#       - table: dwd_trade_refund_fact
-#         alias: r
-#         join_type: LEFT JOIN
-#         on: "r.order_id = o.order_id AND r.sku_id = o.sku_id"
-#     time_column: "o.dt"
-#     output_format: currency
-#     unit: 元
-#     compatible_dimensions: [time_month, time_quarter, time_year,
-#                             store_dim, sku_dim, category_dim]
-#     synonyms: [净收入,净营收,实收,净额,扣退款收入]
-#     tags: [core, revenue]
-
-#   - name: order_count
-#     label: 订单数
-#     description: 订单总数量
-#     metric_type: simple
-#     expression: "COUNT(DISTINCT {alias}.order_id)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     time_column: "{alias}.dt"
-#     output_format: number
-#     unit: 单
-#     compatible_dimensions: [time_day, time_month, time_quarter,
-#                             store_dim, sku_dim, category_dim]
-#     synonyms: [订单数,单量,订单量,成交量,下单量,单数]
-#     tags: [core, volume]
-
-#   - name: buyer_count
-#     label: 买家数
-#     description: 去重后的购买用户数
-#     metric_type: simple
-#     expression: "COUNT(DISTINCT {alias}.user_id)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     time_column: "{alias}.dt"
-#     output_format: number
-#     unit: 人
-#     compatible_dimensions: [time_day, time_month, time_quarter,
-#                             store_dim, sku_dim, category_dim]
-#     synonyms: [买家数,购买人数,消费人数,客户数,用户数]
-#     tags: [core, user]
-
-#   # ── 退款指标 ──────────────────────────────────────────────────────────────
-
-#   - name: refund_amount
-#     label: 退款金额
-#     description: 退款总金额
-#     metric_type: simple
-#     expression: "SUM({alias}.refund_amt)"
-#     primary_source:
-#       table: dwd_trade_refund_fact
-#       alias: r
-#     time_column: "{alias}.dt"
-#     output_format: currency
-#     unit: 元
-#     compatible_dimensions: [time_day, time_month, store_dim, sku_dim]
-#     synonyms: [退款金额,退款额,退货金额]
-#     tags: [refund]
-
-#   - name: refund_rate
-#     label: 退款率
-#     description: 退款金额占 GMV 的比例，越低越好
-#     metric_type: ratio
-#     expression: "ROUND(COALESCE(SUM(r.refund_amt),0) / NULLIF(SUM(o.apportion_amt),0) * 100, 2)"
-#     numerator_expr: "COALESCE(SUM(r.refund_amt), 0)"
-#     denominator_expr: "SUM(o.apportion_amt)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     extra_joins:
-#       - table: dwd_trade_refund_fact
-#         alias: r
-#         join_type: LEFT JOIN
-#         on: "r.order_id = o.order_id"
-#     time_column: "o.dt"
-#     output_format: percent
-#     unit: "%"
-#     compatible_dimensions: [time_month, store_dim, sku_dim, category_dim]
-#     synonyms: [退款率,退货率,退货比例,退款比例,退单率]
-#     tags: [refund, rate]
-
-#   - name: refund_order_count
-#     label: 退款订单数
-#     description: 发生退款的订单数量
-#     metric_type: simple
-#     expression: "COUNT(DISTINCT {alias}.order_id)"
-#     primary_source:
-#       table: dwd_trade_refund_fact
-#       alias: r
-#     time_column: "{alias}.dt"
-#     output_format: number
-#     unit: 单
-#     compatible_dimensions: [time_month, store_dim, sku_dim]
-#     synonyms: [退款单数,退货单量,退单量]
-#     tags: [refund]
-
-#   # ── 用户指标 ──────────────────────────────────────────────────────────────
-
-#   - name: vip_buyer_count
-#     label: VIP买家数
-#     description: 购买的 VIP 用户数量
-#     metric_type: simple
-#     expression: "COUNT(DISTINCT CASE WHEN u.is_plus_vip = 1 THEN o.user_id END)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     extra_joins:
-#       - table: dim_user_info
-#         alias: u
-#         join_type: LEFT JOIN
-#         on: "u.user_id = o.user_id"
-#     time_column: "o.dt"
-#     output_format: number
-#     unit: 人
-#     compatible_dimensions: [time_month, store_dim]
-#     synonyms: [VIP买家,VIP用户,VIP人数,VIP数量]
-#     tags: [user, vip]
-
-#   - name: vip_buyer_rate
-#     label: VIP买家占比
-#     description: VIP 买家占全部买家的比例
-#     metric_type: ratio
-#     expression: >-
-#       ROUND(
-#         COUNT(DISTINCT CASE WHEN u.is_plus_vip = 1 THEN o.user_id END) * 100.0
-#         / NULLIF(COUNT(DISTINCT o.user_id), 0),
-#         2
-#       )
-#     numerator_expr: "COUNT(DISTINCT CASE WHEN u.is_plus_vip = 1 THEN o.user_id END)"
-#     denominator_expr: "COUNT(DISTINCT o.user_id)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     extra_joins:
-#       - table: dim_user_info
-#         alias: u
-#         join_type: LEFT JOIN
-#         on: "u.user_id = o.user_id"
-#     time_column: "o.dt"
-#     output_format: percent
-#     unit: "%"
-#     compatible_dimensions: [time_month, store_dim]
-#     synonyms: [VIP占比,VIP比例,VIP渗透率,会员占比,VIP买家比例]
-#     tags: [user, vip, rate]
-
-#   - name: vip_gmv_rate
-#     label: VIP贡献GMV占比
-#     description: VIP 用户产生的 GMV 占总 GMV 的比例
-#     metric_type: ratio
-#     expression: >-
-#       ROUND(
-#         SUM(CASE WHEN u.is_plus_vip = 1 THEN o.apportion_amt ELSE 0 END) * 100.0
-#         / NULLIF(SUM(o.apportion_amt), 0),
-#         2
-#       )
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     extra_joins:
-#       - table: dim_user_info
-#         alias: u
-#         join_type: LEFT JOIN
-#         on: "u.user_id = o.user_id"
-#     time_column: "o.dt"
-#     output_format: percent
-#     unit: "%"
-#     compatible_dimensions: [time_month, store_dim]
-#     synonyms: [VIP GMV占比,VIP贡献率,会员贡献]
-#     tags: [user, vip, rate]
-
-#   - name: avg_order_value
-#     label: 客单价
-#     description: 平均每单成交金额
-#     metric_type: ratio
-#     expression: "ROUND(SUM({alias}.apportion_amt) / NULLIF(COUNT(DISTINCT {alias}.order_id), 0), 2)"
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     time_column: "{alias}.dt"
-#     output_format: currency
-#     unit: 元
-#     compatible_dimensions: [time_month, store_dim, sku_dim, category_dim]
-#     synonyms: [客单价,均单价,平均客单价,笔均金额,单均金额]
-#     tags: [core, revenue]
-
-#   # ── 优惠券指标 ──────────────────────────────────────────────────────────
-
-#   - name: coupon_used_count
-#     label: 优惠券使用量
-#     description: 核销的优惠券数量
-#     metric_type: simple
-#     expression: "COUNT({alias}.coupon_id)"
-#     primary_source:
-#       table: dwd_marketing_coupon_use
-#       alias: c
-#     time_column: "{alias}.dt"
-#     output_format: number
-#     unit: 张
-#     compatible_dimensions: [time_month, store_dim, sku_dim]
-#     synonyms: [优惠券,券,优惠,核销量,券使用量]
-#     tags: [marketing, coupon]
-
-#   - name: coupon_discount_amount
-#     label: 优惠券折扣金额
-#     description: 优惠券带来的折扣总金额（即少收了多少钱）
-#     metric_type: simple
-#     expression: "SUM({alias}.discount_amt)"
-#     primary_source:
-#       table: dwd_marketing_coupon_use
-#       alias: c
-#     time_column: "{alias}.dt"
-#     output_format: currency
-#     unit: 元
-#     compatible_dimensions: [time_month, store_dim]
-#     synonyms: [优惠金额,折扣金额,让利金额,券折扣]
-#     tags: [marketing, coupon]
-
-#   # ── 高复杂度指标（优先走 LLM 路径）────────────────────────────────────────
-
-#   - name: repurchase_rate
-#     label: 复购率
-#     description: 在统计周期内购买次数 >= 2 的用户比例（复杂，走 LLM 路径）
-#     metric_type: derived
-#     complexity: high
-#     expression: ""
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     time_column: "o.dt"
-#     output_format: percent
-#     unit: "%"
-#     compatible_dimensions: [time_month, store_dim]
-#     synonyms: [复购率,回购率,二次购买率,回头客比例]
-#     tags: [user, retention, rate]
-
-#   - name: churn_rate
-#     label: 用户流失率
-#     description: 上期有购买、本期无购买的用户比例（复杂，走 LLM 路径）
-#     metric_type: derived
-#     complexity: high
-#     expression: ""
-#     primary_source:
-#       table: dwd_trade_order_wide
-#       alias: o
-#     time_column: "o.dt"
-#     output_format: percent
-#     unit: "%"
-#     compatible_dimensions: [time_month, store_dim]
-#     synonyms: [流失率,用户流失,流失用户比例,流失]
-#     tags: [user, retention, rate]
-
-
-# # =============================================================================
-# # 业务域（Business）：高层次问题聚类，用于意图模糊时快速召回
-# # =============================================================================
-# business:
-
-#   - name: sales_overview
-#     label: 销售概览
-#     description: 整体销售趋势、门店/商品排名、GMV 分析
-#     related_metrics: [gmv, net_revenue, order_count, buyer_count, avg_order_value]
-#     related_dimensions: [time_month, store_dim, sku_dim, category_dim]
-#     typical_questions:
-#       - "销售额|GMV|营收|收入|总销售"
-#       - "门店排名|商品排名|品类排名"
-#       - "环比|同比|趋势|走势"
-#       - "哪些门店|哪些商品|哪些品类"
-#     default_dimensions: [time_month]
-#     default_sort: "gmv DESC"
-#     synonyms: [销售,销售分析,销售情况,销售数据]
-#     tags: [core]
-
-#   - name: refund_analysis
-#     label: 退款分析
-#     description: 退款率、退款趋势、退款原因分析
-#     related_metrics: [refund_amount, refund_rate, refund_order_count]
-#     related_dimensions: [time_month, store_dim, sku_dim, category_dim]
-#     typical_questions:
-#       - "退款|退货|退单|退"
-#       - "退款率|退货率"
-#     default_dimensions: [time_month]
-#     default_sort: "refund_rate DESC"
-#     synonyms: [退款,退货,退单分析,售后]
-#     tags: [refund]
-
-#   - name: user_analysis
-#     label: 用户分析
-#     description: 用户行为、VIP 转化、流失、复购分析
-#     related_metrics: [buyer_count, vip_buyer_count, vip_buyer_rate, vip_gmv_rate,
-#                       repurchase_rate, churn_rate]
-#     related_dimensions: [time_month, store_dim, user_type_dim]
-#     typical_questions:
-#       - "用户|买家|VIP|会员|流失|留存|复购|回购"
-#       - "VIP占比|VIP贡献|会员比例"
-#     default_dimensions: [time_month]
-#     synonyms: [用户,买家,客户,会员分析,VIP分析]
-#     tags: [user]
-
-#   - name: product_performance
-#     label: 商品表现
-#     description: 商品销量、品类分布、爆款分析
-#     related_metrics: [gmv, order_count, buyer_count, refund_rate, avg_order_value]
-#     related_dimensions: [time_month, sku_dim, category_dim]
-#     typical_questions:
-#       - "商品|SKU|产品|品类|货品"
-#       - "热销|爆款|滞销|畅销"
-#       - "哪些商品|哪类商品"
-#     default_dimensions: [time_month, sku_dim]
-#     default_sort: "gmv DESC"
-#     synonyms: [商品分析,产品分析,品类分析,SKU分析]
-#     tags: [sku]
-
-#   - name: marketing_analysis
-#     label: 营销分析
-#     description: 优惠券使用效果、营销 ROI 分析
-#     related_metrics: [coupon_used_count, coupon_discount_amount, gmv, buyer_count]
-#     related_dimensions: [time_month, store_dim, sku_dim]
-#     typical_questions:
-#       - "优惠券|券|折扣|促销|营销|活动"
-#       - "券效果|ROI|优惠"
-#     default_dimensions: [time_month]
-#     synonyms: [营销,优惠,促销分析,活动分析]
-#     tags: [marketing]
+version: '1.0'
+db_name: retail_dw
+entities:
+- name: sku
+  label: 商品
+  description: 交易商品SKU
+  primary_table: dim_sku_info
+  primary_key: sku_id
+  display_key: sku_name
+  searchable_fields:
+  - sku_name
+  - category_1_name
+- name: store
+  label: 门店
+  description: 物理销售门店
+  primary_table: dim_store_info
+  primary_key: store_id
+  display_key: store_name
+  searchable_fields:
+  - store_name
+  - city
+  - region
+- name: user
+  label: 用户
+  description: 下单用户信息
+  primary_table: dim_user_info
+  primary_key: user_id
+  display_key: phone_hash
+  searchable_fields:
+  - phone_hash
+  - user_level
+dimensions:
+- name: category_dim
+  label: 品类维度
+  dim_type: entity_ref
+  description: 按一级品类分组
+  entity: sku
+  join:
+    table: dim_sku_info
+    alias: dsku
+    join_type: LEFT JOIN
+    'on': ''
+  select_fields:
+  - category_1_id
+  - category_1_name
+  synonyms:
+  - 品类
+  - 类目
+  - 一级品类
+  - 大类
+  tags:
+  - sku
+- name: sku_dim
+  label: 商品维度
+  dim_type: entity_ref
+  entity: sku
+  alias: dsku
+- name: store_dim
+  label: 门店维度
+  dim_type: entity_ref
+  entity: store
+  alias: ds
+- name: time_day
+  label: 日期
+  dim_type: time
+  expression: '{time_col}'
+  alias: stat_day
+- name: time_month
+  label: 月份
+  dim_type: time
+  expression: DATE_FORMAT({time_col}, '%Y-%m')
+  alias: stat_month
+- name: time_quarter
+  label: 季度
+  dim_type: time
+  description: 按季度分析
+  grain: quarter
+  expression: CONCAT(YEAR({time_col}), '-Q', QUARTER({time_col}))
+  alias: stat_quarter
+  synonyms:
+  - 季度
+  - 季
+  - 按季
+  - 每季
+  tags:
+  - time
+- name: time_year
+  label: 年份
+  dim_type: time
+  description: 按年分析
+  grain: year
+  expression: YEAR({time_col})
+  alias: stat_year
+  synonyms:
+  - 年份
+  - 年
+  - 按年
+  - 每年
+  - 年度
+  tags:
+  - time
+- name: user_dim
+  label: 用户维度
+  dim_type: entity_ref
+  entity: user
+  alias: u
+- name: user_type_dim
+  label: 用户类型维度
+  dim_type: entity_ref
+  description: 按用户类型（VIP/普通）分组
+  entity: user
+  join:
+    table: dim_user_info
+    alias: u
+    join_type: LEFT JOIN
+    'on': ''
+  select_fields:
+  - is_plus_vip
+  - user_level
+  synonyms:
+  - 用户类型
+  - 会员类型
+  - VIP类型
+  tags:
+  - user
+metrics:
+- name: avg_order_value
+  label: 客单价
+  metric_type: ratio
+  description: 平均每单成交金额
+  expression: ROUND(SUM({alias}.apportion_amt) / NULLIF(COUNT(DISTINCT {alias}.order_id),
+    0), 2)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: '{alias}.dt'
+  output_format: currency
+  unit: 元
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  - sku_dim
+  - category_dim
+  synonyms:
+  - 客单价
+  - 均单价
+  - 平均客单价
+  - 笔均金额
+  - 单均金额
+  tags:
+  - core
+  - revenue
+- name: buyer_count
+  label: 买家数
+  metric_type: simple
+  description: 去重后的购买用户数
+  expression: COUNT(DISTINCT {alias}.user_id)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: '{alias}.dt'
+  unit: 人
+  compatible_dimensions:
+  - time_day
+  - time_month
+  - time_quarter
+  - store_dim
+  - sku_dim
+  - category_dim
+  synonyms:
+  - 买家数
+  - 购买人数
+  - 消费人数
+  - 客户数
+  - 用户数
+  tags:
+  - core
+  - user
+- name: churn_rate
+  label: 用户流失率
+  metric_type: derived
+  description: 上期有购买、本期无购买的用户比例（复杂，走 LLM 路径）
+  complexity: high
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+  output_format: percent
+  unit: '%'
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  synonyms:
+  - 流失率
+  - 用户流失
+  - 流失用户比例
+  - 流失
+  tags:
+  - user
+  - retention
+  - rate
+- name: coupon_discount_amount
+  label: 优惠券折扣金额
+  metric_type: simple
+  description: 优惠券带来的折扣总金额（即少收了多少钱）
+  expression: SUM({alias}.discount_amt)
+  primary_source:
+    table: dwd_marketing_coupon_use
+    alias: c
+  time_column: '{alias}.dt'
+  output_format: currency
+  unit: 元
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  synonyms:
+  - 优惠金额
+  - 折扣金额
+  - 让利金额
+  - 券折扣
+  tags:
+  - marketing
+  - coupon
+- name: coupon_used_count
+  label: 优惠券使用量
+  metric_type: simple
+  description: 核销的优惠券数量
+  expression: COUNT({alias}.coupon_id)
+  primary_source:
+    table: dwd_marketing_coupon_use
+    alias: c
+  time_column: '{alias}.dt'
+  unit: 张
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  - sku_dim
+  synonyms:
+  - 优惠券
+  - 券
+  - 优惠
+  - 核销量
+  - 券使用量
+  tags:
+  - marketing
+  - coupon
+- name: gmv
+  label: GMV
+  metric_type: simple
+  expression: SUM(o.apportion_amt)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+  output_format: currency
+- name: net_revenue
+  label: 净收入
+  metric_type: derived
+  expression: SUM(o.apportion_amt) - COALESCE(SUM(r.refund_amt), 0)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+  output_format: currency
+- name: order_count
+  label: 订单量
+  metric_type: simple
+  expression: COUNT(DISTINCT o.order_id)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+- name: refund_amount
+  label: 退款金额
+  metric_type: simple
+  description: 退款总金额
+  expression: SUM({alias}.refund_amt)
+  primary_source:
+    table: dwd_trade_refund_fact
+    alias: r
+  time_column: '{alias}.dt'
+  output_format: currency
+  unit: 元
+  compatible_dimensions:
+  - time_day
+  - time_month
+  - store_dim
+  - sku_dim
+  synonyms:
+  - 退款金额
+  - 退款额
+  - 退货金额
+  tags:
+  - refund
+- name: refund_order_count
+  label: 退款订单数
+  metric_type: simple
+  description: 发生退款的订单数量
+  expression: COUNT(DISTINCT {alias}.order_id)
+  primary_source:
+    table: dwd_trade_refund_fact
+    alias: r
+  time_column: '{alias}.dt'
+  unit: 单
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  - sku_dim
+  synonyms:
+  - 退款单数
+  - 退货单量
+  - 退单量
+  tags:
+  - refund
+- name: refund_rate
+  label: 退款率
+  metric_type: ratio
+  expression: ROUND(SUM(r.refund_amt) * 100.0 / NULLIF(SUM(o.apportion_amt), 0), 2)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+  output_format: percent
+- name: repurchase_rate
+  label: 复购率
+  metric_type: derived
+  description: 在统计周期内购买次数 >= 2 的用户比例（复杂，走 LLM 路径）
+  complexity: high
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+  output_format: percent
+  unit: '%'
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  synonyms:
+  - 复购率
+  - 回购率
+  - 二次购买率
+  - 回头客比例
+  tags:
+  - user
+  - retention
+  - rate
+- name: vip_buyer_count
+  label: VIP买家数
+  metric_type: simple
+  description: 购买的 VIP 用户数量
+  expression: COUNT(DISTINCT CASE WHEN u.is_plus_vip = 1 THEN o.user_id END)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  extra_joins:
+  - table: dim_user_info
+    alias: u
+    join_type: LEFT JOIN
+    'on': ''
+  time_column: o.dt
+  unit: 人
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  synonyms:
+  - VIP买家
+  - VIP用户
+  - VIP人数
+  - VIP数量
+  tags:
+  - user
+  - vip
+- name: vip_buyer_rate
+  label: VIP买家占比
+  metric_type: ratio
+  expression: ROUND(COUNT(DISTINCT CASE WHEN u.is_plus_vip=1 THEN o.user_id END)*100.0
+    / NULLIF(COUNT(DISTINCT o.user_id),0), 2)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  time_column: o.dt
+  output_format: percent
+- name: vip_gmv_rate
+  label: VIP贡献GMV占比
+  metric_type: ratio
+  description: VIP 用户产生的 GMV 占总 GMV 的比例
+  expression: "ROUND(\n  SUM(CASE WHEN u.is_plus_vip = 1 THEN o.apportion_amt ELSE\
+    \ 0 END) * 100.0\n  / NULLIF(SUM(o.apportion_amt), 0),\n  2\n)"
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  extra_joins:
+  - table: dim_user_info
+    alias: u
+    join_type: LEFT JOIN
+    'on': ''
+  time_column: o.dt
+  output_format: percent
+  unit: '%'
+  compatible_dimensions:
+  - time_month
+  - store_dim
+  synonyms:
+  - VIP GMV占比
+  - VIP贡献率
+  - 会员贡献
+  tags:
+  - user
+  - vip
+  - rate
+business:
+- name: marketing_analysis
+  label: 营销分析
+  description: 优惠券使用效果、营销 ROI 分析
+  related_metrics:
+  - coupon_used_count
+  - coupon_discount_amount
+  - gmv
+  - buyer_count
+  related_dimensions:
+  - time_month
+  - store_dim
+  - sku_dim
+  typical_questions:
+  - 优惠券|券|折扣|促销|营销|活动
+  - 券效果|ROI|优惠
+  default_dimensions:
+  - time_month
+  synonyms:
+  - 营销
+  - 优惠
+  - 促销分析
+  - 活动分析
+  tags:
+  - marketing
+- name: product_performance
+  label: 商品表现
+  related_metrics:
+  - gmv
+  - refund_rate
+  typical_questions:
+  - 商品
+  - SKU
+  - 退货
+- name: refund_analysis
+  label: 退款分析
+  description: 退款率、退款趋势、退款原因分析
+  related_metrics:
+  - refund_amount
+  - refund_rate
+  - refund_order_count
+  related_dimensions:
+  - time_month
+  - store_dim
+  - sku_dim
+  - category_dim
+  typical_questions:
+  - 退款|退货|退单|退
+  - 退款率|退货率
+  default_dimensions:
+  - time_month
+  default_sort: refund_rate DESC
+  synonyms:
+  - 退款
+  - 退货
+  - 退单分析
+  - 售后
+  tags:
+  - refund
+- name: sales_overview
+  label: 销售概览
+  related_metrics:
+  - gmv
+  - net_revenue
+  - order_count
+  typical_questions:
+  - 销售额
+  - GMV
+  - 营收
+  - 订单量
+- name: user_analysis
+  label: 用户分析
+  related_metrics:
+  - vip_buyer_rate
+  - churn_rate
+  typical_questions:
+  - 用户
+  - VIP占比
+  - 流失率

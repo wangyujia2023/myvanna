@@ -5,6 +5,7 @@ Vanna Skill REST API  +  SSE 实时推送
 import json
 import logging
 import queue as queue_module
+import re
 import sys
 import threading
 from pathlib import Path
@@ -27,6 +28,8 @@ from vanna_skill.semantic.schema_scanner import SchemaScanner
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
+
+_READ_ONLY_SQL_PATTERN = re.compile(r"^\s*(WITH\b|SELECT\b)", re.IGNORECASE)
 
 # ── 配置（统一从 config.json 读取）───────────────────────────────────────────
 CONFIG = load_config()
@@ -285,9 +288,10 @@ def ask_lc(req: AskRequest):
 def execute_sql(body: dict):
     """执行 SQL 并返回结果"""
     sql = body.get("sql", "")
-    if not sql.strip().upper().startswith("SELECT"):
-        raise HTTPException(400, "只允许 SELECT 查询")
+    if not _READ_ONLY_SQL_PATTERN.match(sql or ""):
+        raise HTTPException(400, "只允许只读查询（SELECT / WITH ... SELECT）")
     try:
+        logger.info("[execute] 执行 SQL:\n%s", sql)
         df = get_vanna().run_sql(sql)
         return {
             "columns": df.columns.tolist(),
@@ -722,6 +726,26 @@ def semantic_reload():
         raise HTTPException(500, str(e))
 
 
+@app.post("/semantic/cache/refresh")
+def semantic_cache_refresh():
+    """从 semantic_store 重新加载语义目录到内存，不改写 DB/YAML。"""
+    global _semantic_pipeline
+    try:
+        invalidate_semantic_cache()
+        _semantic_pipeline = None
+        pipeline = get_semantic_pipeline()
+        stats = pipeline._catalog.stats()
+        logger.info("[semantic/cache/refresh] 已从 DB 刷新语义内存: %s", stats)
+        return {
+            "status": "ok",
+            "message": "已从 semantic_store 刷新语义内存",
+            "stats": stats,
+        }
+    except Exception as e:
+        logger.exception(f"[semantic/cache/refresh] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
 @app.get("/semantic/export")
 def semantic_export():
     """
@@ -849,6 +873,7 @@ def semantic_catalog():
     """返回当前语义目录统计信息及节点列表（用于管理页面）。"""
     try:
         catalog = get_semantic_pipeline()._catalog
+        catalog.refresh_from_db(required=False)
         return {
             "stats": catalog.stats(),
             "metrics": [
