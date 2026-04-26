@@ -10,11 +10,15 @@ from .audit_miner import AuditMiner
 from .doris_client import DorisClient
 from .config_store import load_config, save_config, CONFIG_PATH
 from .pipelines.ask_lc_pipeline import AskLCPipeline
+from .prompt_store import PromptStore
+from .retrieval.doris_retriever import invalidate_lineage_cache
 
 __all__ = [
     "DorisVanna", "QwenClient", "tracer",
     "RequestTrace", "Step",
     "MetadataManager", "LineageManager", "AuditMiner", "DorisClient",
+    "PromptStore",
     "load_config", "save_config", "CONFIG_PATH",
     "AskLCPipeline",
+    "invalidate_lineage_cache",
 ]

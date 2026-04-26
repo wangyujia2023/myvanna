@@ -19,6 +19,7 @@ from ..skills.base import SkillContext
 from ..skills.business_doc_skill import BusinessDocSkill
 from ..skills.doris_schema_skill import DorisSchemaSkill
 from ..skills.intent_parse_skill import IntentParseSkill
+from ..skills.lineage_skill import LineageSkill
 from ..skills.sql_example_skill import SQLExampleSkill
 from ..tracer import RequestTrace, tracer
 
@@ -51,6 +52,7 @@ class AskLCPipeline:
             self._vec,
             self._llm,
             db_name=config.get("database", "retail_dw"),
+            biz_client=self._biz,
             top_k=config.get("n_results", 5),
         )
         self._router = RouterAgent(IntentParseSkill(self._llm))
@@ -59,6 +61,7 @@ class AskLCPipeline:
             SQLExampleSkill(self._retriever),
             BusinessDocSkill(self._retriever),
             AuditPatternSkill(self._retriever),
+            LineageSkill(self._retriever),
         ])
         self._generator = SQLGeneratorAgent(config)
         self._guard = SQLGuardAgent(self._biz)
@@ -86,12 +89,13 @@ class AskLCPipeline:
         except Exception as e:
             logger.warning(f"[AskLCPipeline] trace 持久化失败: {e}")
 
-    def run(self, question: str) -> Dict[str, object]:
-        return self.run_with_trace(question)
+    def run(self, question: str, prompt_version: Optional[str] = None) -> Dict[str, object]:
+        return self.run_with_trace(question, prompt_version=prompt_version)
 
     def run_with_trace(
         self,
         question: str,
+        prompt_version: Optional[str] = None,
         step_callback: Optional[Callable[[str, dict], None]] = None,
     ) -> Dict[str, object]:
         trace = tracer.start(question)
@@ -113,11 +117,52 @@ class AskLCPipeline:
             step_router.finish(outputs=routed, note=routed.get("intent", ""))
             notify("step_done", step_router.to_dict())
 
+            # ── 意图守卫：非查询意图直接拒绝，不进入后续 pipeline ────────────
+            if routed.get("intent") == "invalid":
+                rejection = (
+                    "该请求涉及写操作或与数据查询无关，系统只支持 SELECT 查询，"
+                    "无法执行删除、修改、建表等操作。"
+                )
+                trace.finish(sql="", error=rejection)
+                self._persist_trace(trace)
+                result = {
+                    "question": question,
+                    "normalized_query": routed.get("normalized_query", question),
+                    "intent": "invalid",
+                    "entity": routed.get("entity", ""),
+                    "sql": "",
+                    "guard": {"ok": False, "reason": rejection},
+                    "error": rejection,
+                    "trace": trace.to_dict(),
+                }
+                notify("final", result)
+                return result
+
+            # ── Embedding 前置：整个 pipeline 只算一次向量 ────────────────────
+            # embedding_fallback_mode:
+            #   "fail"    → Embedding 失败直接抛出，pipeline 终止
+            #   "keyword" → 降级为关键词检索，context.embedding 置 None（默认）
+            fallback_mode = self._config.get("embedding_fallback_mode", "keyword")
+            query_text = routed["normalized_query"] or question
+            try:
+                query_vec = self._llm.get_embedding(query_text)
+                logger.debug(f"[AskLCPipeline] Embedding OK, dims={len(query_vec)}")
+            except Exception as emb_err:
+                if fallback_mode == "fail":
+                    raise RuntimeError(
+                        f"Embedding 计算失败，pipeline 终止（embedding_fallback_mode=fail）: {emb_err}"
+                    ) from emb_err
+                logger.warning(
+                    f"[AskLCPipeline] Embedding 失败，降级关键词检索: {emb_err}"
+                )
+                query_vec = None   # Skills 收到 None → 自动走 _search_by_keyword
+
             context = SkillContext(
                 question=question,
                 normalized_query=routed["normalized_query"],
                 intent=routed["intent"],
                 entity=routed["entity"],
+                embedding=query_vec,   # 预算向量挂在 context，所有 Skill 复用
             )
 
             notify("step_start", {"name": "multi_recall", "label": "② 多路召回与融合"})
@@ -126,6 +171,7 @@ class AskLCPipeline:
                 {
                     "normalized_query": context.normalized_query,
                     "intent": context.intent,
+                    "embedding_mode": "vector" if query_vec is not None else f"keyword({fallback_mode})",
                 },
             )
             recall = self._fusion.run(context)
@@ -135,6 +181,7 @@ class AskLCPipeline:
                 "ddl_count": len(fused.get("ddl_items", [])),
                 "doc_count": len(fused.get("doc_items", [])),
                 "audit_count": len(fused.get("audit_items", [])),
+                "lineage_count": len(fused.get("lineage_items", [])),
                 "skill_outputs": recall["skill_outputs"],
             })
             notify("step_done", step_recall.to_dict())
@@ -146,6 +193,7 @@ class AskLCPipeline:
                 normalized_query=context.normalized_query,
                 intent=context.intent,
                 fused_context=fused,
+                prompt_version=prompt_version,
             )
             payload = generated["prompt_payload"]
             step_prompt.finish(outputs={
@@ -153,6 +201,9 @@ class AskLCPipeline:
                 "sim_sql_count": len(fused.get("sql_examples", [])),
                 "ddl_count": len(fused.get("ddl_items", [])),
                 "doc_count": len(fused.get("doc_items", [])),
+                "lineage_count": len(fused.get("lineage_items", [])),
+                "prompt_version": generated.get("prompt_version", "default"),
+                "prompt_name": generated.get("prompt_name", "Default"),
                 "prompt_full": json.dumps(payload, ensure_ascii=False, indent=2),
                 "question_sql_examples": [
                     {
@@ -163,27 +214,79 @@ class AskLCPipeline:
                 ],
                 "ddl_list": [item.get("content", "") for item in fused.get("ddl_items", [])],
                 "doc_list": [item.get("content", "") for item in fused.get("doc_items", [])],
+                "lineage_list": fused.get("lineage_items", []),
             })
             notify("step_done", step_prompt.to_dict())
 
-            notify("step_start", {"name": "llm_generate", "label": "④ LLM 推理生成 SQL"})
-            step_llm = trace.begin_step("llm_generate", {"model": trace.model_used})
+            # ── ④⑤ LLM 生成 + SQL Guard + 自修正循环（最多3次）──────────────
+            MAX_ATTEMPTS = 3
             sql = generated["sql"]
-            step_llm.finish(
-                outputs={"response_len": len(sql), "preview": sql[:300]},
-                note=trace.model_used,
-            )
-            notify("step_done", step_llm.to_dict())
+            guard: dict = {}
+            correction_hint = ""   # 上次失败原因，回传给 LLM 修正
 
-            notify("step_start", {"name": "sql_guard", "label": "⑤ SQL Guard / EXPLAIN"})
-            step_guard = trace.begin_step("sql_guard")
-            guard = self._guard.run(sql)
-            step_guard.finish(
-                status="ok" if guard.get("ok") else "error",
-                outputs=guard,
-                error="" if guard.get("ok") else str(guard.get("reason", "")),
-            )
-            notify("step_done", step_guard.to_dict())
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                label_gen = f"④ LLM 推理生成 SQL" + (f"（第{attempt}次）" if attempt > 1 else "")
+                notify("step_start", {"name": f"llm_generate_{attempt}", "label": label_gen})
+                step_llm = trace.begin_step(
+                    f"llm_generate_{attempt}",
+                    {"model": trace.model_used, "attempt": attempt},
+                )
+
+                if attempt == 1:
+                    # 第一次直接使用已生成的 SQL
+                    pass
+                else:
+                    # 后续重试：把上次错误作为修正提示注入 fused_context
+                    try:
+                        fused_with_hint = dict(fused)
+                        fused_with_hint["correction_hint"] = correction_hint
+                        re_generated = self._generator.run(
+                            question=question,
+                            normalized_query=context.normalized_query,
+                            intent=context.intent,
+                            fused_context=fused_with_hint,
+                            prompt_version=prompt_version,
+                        )
+                        sql = re_generated["sql"]
+                        payload = re_generated["prompt_payload"]
+                    except ValueError as gen_err:
+                        # 生成阶段危险词拦截
+                        step_llm.finish(status="error", error=str(gen_err))
+                        notify("step_done", step_llm.to_dict())
+                        raise
+
+                step_llm.finish(
+                    outputs={"response_len": len(sql), "preview": sql[:300], "attempt": attempt},
+                    note=f"{trace.model_used} attempt={attempt}",
+                )
+                notify("step_done", step_llm.to_dict())
+
+                label_guard = f"⑤ SQL Guard / EXPLAIN" + (f"（第{attempt}次）" if attempt > 1 else "")
+                notify("step_start", {"name": f"sql_guard_{attempt}", "label": label_guard})
+                step_guard = trace.begin_step(f"sql_guard_{attempt}", {"attempt": attempt})
+                guard = self._guard.run(sql)
+                step_guard.finish(
+                    status="ok" if guard.get("ok") else "error",
+                    outputs=guard,
+                    error="" if guard.get("ok") else str(guard.get("reason", "")),
+                )
+                notify("step_done", step_guard.to_dict())
+
+                if guard.get("ok"):
+                    break
+
+                # Guard 失败：准备下一轮修正提示
+                reason = guard.get("reason", "未知错误")
+                correction_hint = (
+                    f"上一次生成的 SQL 存在错误，错误信息：{reason}。\n"
+                    f"错误 SQL：{sql}\n"
+                    f"请根据错误信息修正 SQL，只输出修正后的 SQL。"
+                )
+                logger.warning(
+                    f"[AskLCPipeline] SQL Guard 失败 attempt={attempt}: {reason}"
+                )
+                if attempt == MAX_ATTEMPTS:
+                    logger.error(f"[AskLCPipeline] 自修正耗尽 {MAX_ATTEMPTS} 次，最终失败")
 
             trace.finish(sql=sql, error="" if guard.get("ok") else str(guard.get("reason", "")))
             self._persist_trace(trace)
@@ -193,6 +296,8 @@ class AskLCPipeline:
                 "intent": context.intent,
                 "entity": context.entity,
                 "sql": sql,
+                "prompt_version": generated.get("prompt_version", "default"),
+                "prompt_name": generated.get("prompt_name", "Default"),
                 "guard": guard,
                 "recall": recall,
                 "prompt_payload": payload,

@@ -278,6 +278,121 @@ class DorisVanna(VannaBase):
     # 训练数据写入
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _source_entry_exists(self, table_name: str, where_sql: str, args: tuple) -> bool:
+        rows = self._vec.execute(
+            f"SELECT 1 FROM vanna_store.{table_name} WHERE {where_sql} LIMIT 1",
+            args,
+        )
+        return bool(rows)
+
+    def _insert_sql_source(self, row_id: int, question: str, sql: str, source: str, tables: List[str]):
+        self._vec.execute_write(
+            """
+            INSERT INTO vanna_store.vanna_sql
+                (id, question, sql_text, source, db_name, table_names)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (row_id, question, sql, source, self._db_name, ",".join(tables)),
+        )
+
+    def _insert_doc_source(
+        self,
+        row_id: int,
+        content: str,
+        source: str,
+        *,
+        title: str = "",
+        table_names: Optional[List[str]] = None,
+    ):
+        self._vec.execute_write(
+            """
+            INSERT INTO vanna_store.vanna_doc
+                (id, title, content, source, db_name, table_names)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (row_id, title, content, source, self._db_name, ",".join(table_names or [])),
+        )
+
+    def _insert_metadata_source(
+        self,
+        row_id: int,
+        *,
+        table_name: str,
+        ddl_text: str,
+        summary_text: str,
+        source: str,
+        table_comment: str = "",
+        engine: str = "",
+        table_rows: int = 0,
+    ):
+        self._vec.execute_write(
+            """
+            INSERT INTO vanna_store.vanna_metadata
+                (id, table_name, db_name, table_comment, engine, table_rows,
+                 ddl_text, summary_text, source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                row_id,
+                table_name,
+                self._db_name,
+                table_comment,
+                engine,
+                table_rows,
+                ddl_text,
+                summary_text,
+                source,
+            ),
+        )
+
+    def _insert_embedding_entry(
+        self,
+        *,
+        row_id: int,
+        content_type: str,
+        content: str,
+        embedding_text: str,
+        source: str,
+        question: str = "",
+        table_names: Optional[List[str]] = None,
+    ):
+        if question:
+            self._vec.execute_write(
+                """
+                INSERT INTO vanna_store.vanna_embeddings
+                    (id, content_type, question, content, embedding,
+                     source, db_name, table_names)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    row_id,
+                    content_type,
+                    question,
+                    content,
+                    embedding_text,
+                    source,
+                    self._db_name,
+                    ",".join(table_names or []),
+                ),
+            )
+        else:
+            self._vec.execute_write(
+                """
+                INSERT INTO vanna_store.vanna_embeddings
+                    (id, content_type, content, embedding, source, db_name, table_names)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    row_id,
+                    content_type,
+                    content,
+                    embedding_text,
+                    source,
+                    self._db_name,
+                    ",".join(table_names or []),
+                ),
+            )
+
     def _training_entry_exists(
         self,
         content_type: str,
@@ -301,6 +416,27 @@ class DorisVanna(VannaBase):
             (content_type, question, content, source, db_name),
         )
         return bool(rows)
+
+    def _sql_source_exists(self, question: str, sql: str, source: str) -> bool:
+        return self._source_entry_exists(
+            "vanna_sql",
+            "IFNULL(question, '') = %s AND sql_text = %s AND IFNULL(source, '') = %s AND IFNULL(db_name, '') = %s",
+            (question, sql, source, self._db_name),
+        )
+
+    def _doc_source_exists(self, content: str, source: str) -> bool:
+        return self._source_entry_exists(
+            "vanna_doc",
+            "content = %s AND IFNULL(source, '') = %s AND IFNULL(db_name, '') = %s",
+            (content, source, self._db_name),
+        )
+
+    def _metadata_source_exists(self, table_name: str, source: str) -> bool:
+        return self._source_entry_exists(
+            "vanna_metadata",
+            "table_name = %s AND IFNULL(source, '') = %s AND IFNULL(db_name, '') = %s",
+            (table_name, source, self._db_name),
+        )
 
     def _existing_sql_keys(
         self,
@@ -342,7 +478,7 @@ class DorisVanna(VannaBase):
 
     def add_question_sql(self, question: str, sql: str, **kwargs) -> str:
         source = kwargs.get("source", "manual")
-        if self._training_entry_exists(
+        if self._sql_source_exists(question, sql, source) or self._training_entry_exists(
             "sql",
             question=question,
             content=sql,
@@ -354,13 +490,16 @@ class DorisVanna(VannaBase):
         vec = self._gemini.get_embedding(question)
         tables = _extract_tables(sql)
         row_id = _next_bigint_id()
-        self._vec.execute_write("""
-            INSERT INTO vanna_store.vanna_embeddings
-                (id, content_type, question, content, embedding,
-                 source, db_name, table_names)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (row_id, "sql", question, sql, json.dumps(vec),
-              source, self._db_name, ",".join(tables)))
+        self._insert_sql_source(row_id, question, sql, source, tables)
+        self._insert_embedding_entry(
+            row_id=row_id,
+            content_type="sql",
+            question=question,
+            content=sql,
+            embedding_text=json.dumps(vec),
+            source=source,
+            table_names=tables,
+        )
         return "ok"
 
     def add_question_sql_batch(
@@ -414,7 +553,9 @@ class DorisVanna(VannaBase):
             for item in chunk:
                 vec = self._gemini.get_embedding(item["question"])
                 row_id = _next_bigint_id()
-                tables = ",".join(_extract_tables(item["sql"]))
+                tables_list = _extract_tables(item["sql"])
+                tables = ",".join(tables_list)
+                self._insert_sql_source(row_id, item["question"], item["sql"], source, tables_list)
                 values_sql.append("(%s, %s, %s, %s, %s, %s, %s, %s)")
                 args.extend([
                     row_id,
@@ -440,9 +581,73 @@ class DorisVanna(VannaBase):
 
         return {"added": added, "skipped": skipped}
 
+    def add_metadata(
+        self,
+        *,
+        table_name: str,
+        ddl: str,
+        summary: str,
+        source: str = "schema",
+        table_comment: str = "",
+        engine: str = "",
+        table_rows: int = 0,
+    ) -> dict:
+        if self._metadata_source_exists(table_name, source):
+            return {"status": "exists", "ddl": "exists", "doc": "exists"}
+
+        row_id = _next_bigint_id()
+        self._insert_metadata_source(
+            row_id,
+            table_name=table_name,
+            ddl_text=ddl,
+            summary_text=summary,
+            source=source,
+            table_comment=table_comment,
+            engine=engine,
+            table_rows=table_rows,
+        )
+        ddl_result = "exists"
+        if not self._training_entry_exists(
+            "ddl",
+            content=ddl,
+            source=source,
+            db_name=self._db_name,
+        ):
+            ddl_vec = self._gemini.get_embedding(ddl)
+            self._insert_embedding_entry(
+                row_id=row_id,
+                content_type="ddl",
+                content=ddl,
+                embedding_text=json.dumps(ddl_vec),
+                source=source,
+                table_names=[table_name],
+            )
+            ddl_result = "ok"
+
+        doc_result = "exists"
+        if summary and not self._training_entry_exists(
+            "doc",
+            content=summary,
+            source=source,
+            db_name=self._db_name,
+        ):
+            doc_row_id = _next_bigint_id()
+            doc_vec = self._gemini.get_embedding(summary)
+            self._insert_embedding_entry(
+                row_id=doc_row_id,
+                content_type="doc",
+                content=summary,
+                embedding_text=json.dumps(doc_vec),
+                source=source,
+                table_names=[table_name],
+            )
+            doc_result = "ok"
+        return {"status": "ok", "ddl": ddl_result, "doc": doc_result}
+
     def add_ddl(self, ddl: str, **kwargs) -> str:
         source = kwargs.get("source", "schema")
-        if self._training_entry_exists(
+        table_name = (_extract_tables(ddl) or [""])[0]
+        if (table_name and self._metadata_source_exists(table_name, source)) or self._training_entry_exists(
             "ddl",
             content=ddl,
             source=source,
@@ -453,17 +658,27 @@ class DorisVanna(VannaBase):
         vec = self._gemini.get_embedding(ddl)
         tables = _extract_tables(ddl)
         row_id = _next_bigint_id()
-        self._vec.execute_write("""
-            INSERT INTO vanna_store.vanna_embeddings
-                (id, content_type, content, embedding, source, db_name, table_names)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (row_id, "ddl", ddl, json.dumps(vec), source,
-              self._db_name, ",".join(tables)))
+        self._insert_metadata_source(
+            row_id,
+            table_name=tables[0] if tables else f"unknown_{row_id}",
+            ddl_text=ddl,
+            summary_text="",
+            source=source,
+        )
+        self._insert_embedding_entry(
+            row_id=row_id,
+            content_type="ddl",
+            content=ddl,
+            embedding_text=json.dumps(vec),
+            source=source,
+            table_names=tables,
+        )
         return "ok"
 
     def add_documentation(self, documentation: str, **kwargs) -> str:
         source = kwargs.get("source", "manual")
-        if self._training_entry_exists(
+        title = kwargs.get("title", "")
+        if self._doc_source_exists(documentation, source) or self._training_entry_exists(
             "doc",
             content=documentation,
             source=source,
@@ -473,11 +688,14 @@ class DorisVanna(VannaBase):
 
         vec = self._gemini.get_embedding(documentation)
         row_id = _next_bigint_id()
-        self._vec.execute_write("""
-            INSERT INTO vanna_store.vanna_embeddings
-                (id, content_type, content, embedding, source, db_name)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (row_id, "doc", documentation, json.dumps(vec), source, self._db_name))
+        self._insert_doc_source(row_id, documentation, source, title=title)
+        self._insert_embedding_entry(
+            row_id=row_id,
+            content_type="doc",
+            content=documentation,
+            embedding_text=json.dumps(vec),
+            source=source,
+        )
         return "ok"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -487,19 +705,118 @@ class DorisVanna(VannaBase):
     def get_training_data(self, **kwargs) -> pd.DataFrame:
         return self._vec.query_df("""
             SELECT id, content_type, source, db_name, table_names,
-                   SUBSTRING(question, 1, 80) AS question,
-                   SUBSTRING(content, 1, 120) AS content_preview,
-                   quality_score, use_count, created_at
-            FROM vanna_store.vanna_embeddings
+                   question, content_preview, quality_score, use_count, created_at
+            FROM (
+                SELECT id,
+                       'sql' AS content_type,
+                       source,
+                       db_name,
+                       table_names,
+                       SUBSTRING(question, 1, 80) AS question,
+                       SUBSTRING(sql_text, 1, 120) AS content_preview,
+                       quality_score,
+                       use_count,
+                       created_at
+                FROM vanna_store.vanna_sql
+
+                UNION ALL
+
+                SELECT id,
+                       'ddl' AS content_type,
+                       source,
+                       db_name,
+                       table_name AS table_names,
+                       table_name AS question,
+                       SUBSTRING(ddl_text, 1, 120) AS content_preview,
+                       quality_score,
+                       use_count,
+                       created_at
+                FROM vanna_store.vanna_metadata
+                WHERE IFNULL(ddl_text, '') != ''
+
+                UNION ALL
+
+                SELECT id,
+                       'doc' AS content_type,
+                       source,
+                       db_name,
+                       table_names,
+                       SUBSTRING(title, 1, 80) AS question,
+                       SUBSTRING(content, 1, 120) AS content_preview,
+                       quality_score,
+                       use_count,
+                       created_at
+                FROM vanna_store.vanna_doc
+            ) t
             ORDER BY created_at DESC
             LIMIT 500
         """)
 
+    def get_sql_source_data(self, limit: int = 300) -> pd.DataFrame:
+        return self._vec.query_df(
+            f"""
+            SELECT id, source, db_name, table_names,
+                   SUBSTRING(question, 1, 120) AS question,
+                   SUBSTRING(sql_text, 1, 220) AS content_preview,
+                   quality_score, use_count, created_at
+            FROM vanna_store.vanna_sql
+            ORDER BY created_at DESC
+            LIMIT {int(limit)}
+            """
+        )
+
+    def get_doc_source_data(self, limit: int = 300) -> pd.DataFrame:
+        return self._vec.query_df(
+            f"""
+            SELECT id, source, db_name, table_names,
+                   SUBSTRING(title, 1, 120) AS question,
+                   SUBSTRING(content, 1, 220) AS content_preview,
+                   quality_score, use_count, created_at
+            FROM vanna_store.vanna_doc
+            ORDER BY created_at DESC
+            LIMIT {int(limit)}
+            """
+        )
+
+    def get_metadata_source_data(self, limit: int = 300) -> pd.DataFrame:
+        return self._vec.query_df(
+            f"""
+            SELECT id, source, db_name, table_name AS table_names,
+                   table_name AS question,
+                   SUBSTRING(ddl_text, 1, 220) AS content_preview,
+                   quality_score, use_count, created_at
+            FROM vanna_store.vanna_metadata
+            ORDER BY created_at DESC
+            LIMIT {int(limit)}
+            """
+        )
+
+    def get_lineage_source_data(self, limit: int = 300) -> pd.DataFrame:
+        return self._vec.query_df(
+            f"""
+            SELECT edge_id AS id, source, relation_type, sql_type,
+                   source_table, target_table, freq, created_at
+            FROM vanna_store.vanna_lineage
+            ORDER BY freq DESC, created_at DESC
+            LIMIT {int(limit)}
+            """
+        )
+
     def remove_training_data(self, id: str, **kwargs) -> bool:
-        n = self._vec.execute_write(
+        affected = 0
+        affected += self._vec.execute_write(
             "DELETE FROM vanna_store.vanna_embeddings WHERE id = %s", (id,)
         )
-        return n > 0
+        affected += self._vec.execute_write(
+            "DELETE FROM vanna_store.vanna_sql WHERE id = %s", (id,)
+        )
+        affected += self._vec.execute_write(
+            "DELETE FROM vanna_store.vanna_doc WHERE id = %s", (id,)
+        )
+        affected += self._vec.execute_write(
+            "DELETE FROM vanna_store.vanna_metadata WHERE id = %s", (id,)
+        )
+        return affected > 0
 
     def update_quality_score(self, id: int, score: float):
         self._vec.execute_write(

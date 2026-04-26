@@ -411,11 +411,70 @@ elif page == "🔗 血缘分析":
 
     col_build, col_analysis = st.columns([2, 1])
     with col_build:
-        if st.button("🏗️ 从 audit_log 构建血缘图"):
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            do_build = st.button("🏗️ 从 audit_log 构建血缘图")
+        with col_btn2:
+            do_diag = st.button("🔍 诊断 audit_log（0 条时点这里）")
+
+        if do_build:
             with st.spinner("解析 SQL 血缘中..."):
-                n = lm.build_from_audit_log(limit=3000)
+                fetched, n = lm.build_from_audit_log_verbose(limit=3000)
                 n2 = lm.build_from_vanna_knowledge()
-            st.success(f"构建完成：audit_log {n} 条 + Vanna知识库 {n2} 条")
+            total = len(lm.graph.all_tables())
+            # 展示诊断数字，无论成功与否
+            st.info(
+                f"audit_log 取回 SQL：**{fetched}** 条 ｜ 解析出 edge：**{n}** 条"
+                f" ｜ Vanna 知识库：**{n2}** 条 ｜ 涉及表：**{total}** 张"
+            )
+            if fetched == 0:
+                st.error("❌ 查询返回 0 行——连接或权限有问题，请查看后台日志。")
+            elif n + n2 == 0:
+                st.warning(
+                    f"⚠️ 取回了 {fetched} 条 SQL，但解析出 0 条血缘。\n\n"
+                    "原因：这些 SQL 均为 `INSERT INTO t VALUES(...)` 格式，没有 FROM 子句。\n"
+                    "点击「🔍 诊断 audit_log」查看样本。"
+                )
+            else:
+                st.success(f"✅ 血缘图构建完成，共 {total} 张表，{n + n2} 条依赖关系。")
+
+        if do_diag:
+            with st.spinner("分析 audit_log 中的 SQL 结构..."):
+                diag = lm.diagnose_audit_log(limit=200)
+            st.markdown("### 📊 audit_log 诊断报告")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("取回 SQL 总数", diag["fetched"])
+            c2.metric("含 FROM（可产生血缘）", diag["has_from"])
+            c3.metric("纯 VALUES（不产生血缘）", diag["values_only"])
+            c4.metric("实际解析 edge 数", diag["parsed_edges"])
+
+            if diag["fetched"] == 0:
+                st.error("❌ audit_log 里完全没有 INSERT/CREATE 语句，请确认 Doris 审计日志已开启。")
+            elif diag["has_from"] == 0:
+                st.error(
+                    "❌ 取回的 SQL **全部是** `INSERT INTO t VALUES(...)` 格式，"
+                    "无 FROM 子句，无法产生表级血缘。\n\n"
+                    "血缘需要 ETL 型 SQL，例如：\n"
+                    "```sql\n"
+                    "INSERT INTO dw_table SELECT a, b FROM ods_table WHERE ...\n"
+                    "```"
+                )
+            elif diag["parsed_edges"] == 0:
+                st.warning(
+                    "⚠️ 有含 FROM 的 SQL，但解析出的 edge 为 0。"
+                    "请查看下方「含 FROM 的 SQL 样本」，可能是表名格式不匹配正则。"
+                )
+            else:
+                st.success(f"✅ 应能解析出 {diag['parsed_edges']} 条血缘，请点击「构建血缘图」。")
+
+            if diag["samples_with_from"]:
+                with st.expander(f"✅ 含 FROM 的 SQL 样本（共 {diag['has_from']} 条，展示前5条）"):
+                    for i, sql in enumerate(diag["samples_with_from"], 1):
+                        st.code(sql, language="sql")
+            if diag["samples_no_from"]:
+                with st.expander(f"⚠️ 纯 VALUES 的 SQL 样本（共 {diag['values_only']} 条，展示前5条）"):
+                    for i, sql in enumerate(diag["samples_no_from"], 1):
+                        st.code(sql, language="sql")
 
     # 血缘图
     all_tables = sorted(lm.graph.all_tables())

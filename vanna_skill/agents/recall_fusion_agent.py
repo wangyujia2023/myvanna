@@ -31,17 +31,20 @@ class RecallFusionAgent(BaseAgent):
         ddl_items = outputs.get("doris_schema_skill", {}).get("items", [])
         doc_items = outputs.get("business_doc_skill", {}).get("items", [])
         audit_items = outputs.get("audit_pattern_skill", {}).get("items", [])
+        lineage_items = outputs.get("lineage_skill", {}).get("items", [])
 
         fused_context = {
             "sql_examples": sql_examples,
             "ddl_items": ddl_items,
             "doc_items": doc_items,
             "audit_items": audit_items,
+            "lineage_items": lineage_items,
             "weights": {
                 "ddl": 0.4,
                 "sql_examples": 0.4,
                 "business_doc": 0.2,
                 "audit_patterns": 0.2,
+                "lineage": 0.3,
             },
         }
         return {"skill_outputs": outputs, "fused_context": fused_context}

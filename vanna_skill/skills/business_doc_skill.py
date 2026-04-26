@@ -17,5 +17,9 @@ class BusinessDocSkill(BaseSkill):
         self._top_k = top_k
 
     def run(self, context: SkillContext) -> Dict[str, Any]:
-        rows = self._retriever.retrieve_docs(context.normalized_query or context.question, top_k=self._top_k)
+        rows = self._retriever.retrieve_docs(
+            context.normalized_query or context.question,
+            vec=context.embedding,
+            top_k=self._top_k,
+        )
         return {"items": rows, "count": len(rows)}

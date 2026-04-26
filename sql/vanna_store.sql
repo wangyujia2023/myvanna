@@ -36,6 +36,63 @@ PROPERTIES (
     "replication_num" = "1"
 );
 
+-- ── SQL 源数据表 ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS vanna_sql (
+    id              BIGINT          NOT NULL    COMMENT '主键（应用侧生成）',
+    question        TEXT            NOT NULL    COMMENT '自然语言问题',
+    sql_text        TEXT            NOT NULL    COMMENT 'SQL文本',
+    source          VARCHAR(50)                 COMMENT '来源：audit_log/manual/feedback',
+    db_name         VARCHAR(100)                COMMENT '所属数据库',
+    table_names     TEXT                        COMMENT '涉及表名（逗号分隔）',
+    quality_score   FLOAT           DEFAULT 1.0 COMMENT '质量评分',
+    use_count       INT             DEFAULT 0   COMMENT '命中次数',
+    created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=OLAP
+DUPLICATE KEY(id)
+COMMENT 'Vanna SQL 样本源数据'
+DISTRIBUTED BY HASH(id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
+-- ── 文档源数据表 ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS vanna_doc (
+    id              BIGINT          NOT NULL    COMMENT '主键（应用侧生成）',
+    title           VARCHAR(255)                COMMENT '文档标题',
+    content         TEXT            NOT NULL    COMMENT '文档正文',
+    source          VARCHAR(50)                 COMMENT '来源：manual/schema/import',
+    db_name         VARCHAR(100)                COMMENT '所属数据库',
+    table_names     TEXT                        COMMENT '关联表名（逗号分隔）',
+    quality_score   FLOAT           DEFAULT 1.0 COMMENT '质量评分',
+    use_count       INT             DEFAULT 0   COMMENT '命中次数',
+    created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=OLAP
+DUPLICATE KEY(id)
+COMMENT 'Vanna 文档源数据'
+DISTRIBUTED BY HASH(id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
+-- ── 元数据源表 ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS vanna_metadata (
+    id              BIGINT          NOT NULL    COMMENT '主键（应用侧生成）',
+    table_name      VARCHAR(128)    NOT NULL    COMMENT '表名',
+    db_name         VARCHAR(100)                COMMENT '所属数据库',
+    table_comment   TEXT                        COMMENT '表注释',
+    engine          VARCHAR(64)                 COMMENT '存储引擎',
+    table_rows      BIGINT           DEFAULT 0  COMMENT '预估行数',
+    ddl_text        TEXT                        COMMENT 'DDL 文本',
+    summary_text    TEXT                        COMMENT '摘要文本',
+    source          VARCHAR(50)                 COMMENT '来源：schema/manual',
+    quality_score   FLOAT           DEFAULT 1.0 COMMENT '质量评分',
+    use_count       INT             DEFAULT 0   COMMENT '命中次数',
+    created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=OLAP
+DUPLICATE KEY(id)
+COMMENT 'Vanna 元数据源数据'
+DISTRIBUTED BY HASH(id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
 -- ── 主键说明 ────────────────────────────────────────────────────────────────
 -- 当前由应用侧生成 BIGINT id；若后续 Doris 版本和建表策略支持自增，可再切回。
 
@@ -78,6 +135,53 @@ DISTRIBUTED BY HASH(trace_id) BUCKETS 2
 PROPERTIES (
     "replication_num" = "1"
 );
+
+-- ── 结构化血缘表 ────────────────────────────────────────────────────────────
+-- DROP TABLE IF EXISTS vanna_lineage;
+
+CREATE TABLE IF NOT EXISTS vanna_lineage (
+    edge_id          VARCHAR(64)     NOT NULL    COMMENT '边唯一ID（source->target->type）',
+    source_table     VARCHAR(128)    NOT NULL    COMMENT '上游表',
+    target_table     VARCHAR(128)    NOT NULL    COMMENT '下游表/目标表',
+    relation_type    VARCHAR(32)     NOT NULL    COMMENT '关系类型：table_lineage',
+    sql_type         VARCHAR(32)                 COMMENT 'SQL类型：INSERT/CREATE',
+    sql_preview      TEXT                        COMMENT '样例SQL片段',
+    source           VARCHAR(50)                 COMMENT '来源：audit_log / vanna_sql',
+    freq             INT             DEFAULT 1   COMMENT '出现频次',
+    created_at       DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at       DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=OLAP
+UNIQUE KEY(edge_id)
+COMMENT 'Vanna 结构化表级血缘'
+DISTRIBUTED BY HASH(edge_id) BUCKETS 4
+PROPERTIES (
+    "replication_num" = "1"
+);
+
+-- ── Prompt 版本表 ───────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS vanna_prompt (
+    id              VARCHAR(64)     NOT NULL    COMMENT 'Prompt版本ID',
+    name            VARCHAR(255)                COMMENT '版本名称',
+    description     TEXT                        COMMENT '版本说明',
+    system_prompt   TEXT            NOT NULL    COMMENT 'System Prompt正文',
+    created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=OLAP
+UNIQUE KEY(id)
+COMMENT 'Prompt Lab 版本表'
+DISTRIBUTED BY HASH(id) BUCKETS 2
+PROPERTIES ("replication_num" = "1");
+
+-- ── Prompt 配置表 ───────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS vanna_prompt_config (
+    config_key      VARCHAR(64)     NOT NULL    COMMENT '配置键',
+    config_value    TEXT                        COMMENT '配置值',
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=OLAP
+UNIQUE KEY(config_key)
+COMMENT 'Prompt Lab 配置表'
+DISTRIBUTED BY HASH(config_key) BUCKETS 2
+PROPERTIES ("replication_num" = "1");
 
 -- ==========================================================================
 -- 验证
