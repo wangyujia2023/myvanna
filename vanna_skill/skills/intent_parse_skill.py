@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field
 
 from .base import BaseSkill, SkillContext
+from ..core.security import DESTRUCTIVE_INTENT_PATTERN
 from ..qwen_client import QwenClient
 
 
@@ -31,18 +32,7 @@ class IntentParseSkill(BaseSkill):
     # 在生成前用正则快速识别明显的破坏性关键词，避免浪费一次 LLM 调用
     # Python 3 的 \w 默认包含 Unicode（汉字也是 \w），导致 \b 在中英文衔接处失效。
     # 解决方案：英文关键词用 (?<![a-zA-Z]) / (?![a-zA-Z]) 做纯 ASCII 词边界。
-    _DDL_PATTERN = re.compile(
-        r"(?:"
-        # ── 中文破坏性关键词（直接匹配）
-        r"删(?:除|掉|库|表|数据|字段|列|行)|清空|清除数据|改表|改字段|加字段|删字段"
-        r"|建表|建库|新建表|修改表|修改字段|截断|丢弃"
-        r"|"
-        # ── 英文 SQL DDL/DML 关键词（ASCII 标识符边界：前后不能是字母或下划线）
-        r"(?<![a-zA-Z_])(?:drop|alter|truncate|delete|update|insert"
-        r"|create\s+table|grant|revoke|replace\s+into)(?![a-zA-Z_])"
-        r")",
-        re.IGNORECASE,
-    )
+    _DDL_PATTERN = DESTRUCTIVE_INTENT_PATTERN
 
     def run(self, context: SkillContext) -> Dict[str, Any]:
         # ── 快速路径：关键词命中直接返回 invalid，无需 LLM ──────────────────

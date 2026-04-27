@@ -9,9 +9,11 @@ from .lineage import LineageManager
 from .audit_miner import AuditMiner
 from .doris_client import DorisClient
 from .config_store import load_config, save_config, CONFIG_PATH
-from .pipelines.ask_lc_pipeline import AskLCPipeline
+from .pipelines.langchain_pipeline import AskLCPipeline
 from .prompt_store import PromptStore
-from .retrieval.doris_retriever import invalidate_lineage_cache
+from .retrieval.doris_knowledge_retriever import invalidate_lineage_cache
+from .cube import CubeService
+from .pipelines.cube_pipeline import CubePipeline
 
 __all__ = [
     "DorisVanna", "QwenClient", "tracer",
@@ -21,4 +23,6 @@ __all__ = [
     "load_config", "save_config", "CONFIG_PATH",
     "AskLCPipeline",
     "invalidate_lineage_cache",
+    "CubeService",
+    "CubePipeline",
 ]

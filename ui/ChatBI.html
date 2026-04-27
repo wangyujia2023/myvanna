@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatBI · 智能问数平台</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{height:100%;overflow:hidden}
+body{background:#060C18;color:#E8F0FB;font-family:'Helvetica Neue',-apple-system,'PingFang SC','Microsoft YaHei UI',sans-serif;font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(59,130,246,0.25);border-radius:2px}
+button,input,select,textarea{font-family:inherit;font-size:inherit}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+@keyframes glow{0%,100%{box-shadow:0 0 20px rgba(59,130,246,0.3)}50%{box-shadow:0 0 36px rgba(59,130,246,0.55)}}
+.fade-up{animation:fadeUp 0.4s cubic-bezier(.22,1,.36,1) forwards}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback}=React;
+
+// ─── Design tokens ────────────────────────────────────────────
+const C={
+  bg:'#060C18',s1:'#0B1424',s2:'#111E35',s3:'#192B4A',s4:'#1E3254',
+  border:'rgba(59,130,246,0.13)',bh:'rgba(59,130,246,0.38)',
+  acc:'#3B82F6',accL:'#60A5FA',accG:'rgba(59,130,246,0.22)',
+  t1:'#EBF1FB',t2:'#8BAAC8',t3:'#4A6685',
+  ok:'#10B981',okG:'rgba(16,185,129,0.18)',
+  warn:'#F59E0B',warnG:'rgba(245,158,11,0.18)',
+  err:'#F06060',errG:'rgba(240,96,96,0.18)',
+  purple:'#A78BFA',purpleG:'rgba(167,139,250,0.18)',
+  cyan:'#22D3EE',cyanG:'rgba(34,211,238,0.18)',
+};
+
+// ─── SVG Icons ────────────────────────────────────────────────
+const ICONS={
+  brain:   'M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z',
+  grid:    'M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z',
+  trend:   'M23 6 13.5 15.5 8.5 10.5 1 18 M17 6h6v6',
+  db:      'M12 2C7.6 2 4 3.8 4 6v12c0 2.2 3.6 4 8 4s8-1.8 8-4V6c0-2.2-3.6-4-8-4z M4 12c0 2.2 3.6 4 8 4s8-1.8 8-4 M4 9c0 2.2 3.6 4 8 4s8-1.8 8-4',
+  settings:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
+  export:  'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
+  users:   'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  history: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M12 7v5l4 2',
+  bell:    'M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9 M13.73 21a2 2 0 0 1-3.46 0',
+  send:    'M22 2L11 13 M22 2l-7 20-4-9-9-4z',
+  plus:    'M12 5v14 M5 12h14',
+  search:  'M21 21l-4.35-4.35 M11 19A8 8 0 1 0 11 3a8 8 0 0 0 0 16z',
+  check:   'M20 6L9 17 4 12',
+  close:   'M18 6L6 18 M6 6l12 12',
+  spark:   'M13 2L3 14h9l-1 8 10-12h-9z',
+  attr:    'M10 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0 M3 12h7 M14 12h7 M12 3v7 M12 14v7',
+  regline: 'M3 20L21 4 M6.5 17.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0 M10.5 12a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0 M14.5 8a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0 M16 13.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0',
+  test:    'M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4 M15 3l6 6 M15 9l6-6 M8 12h4 M8 16h6',
+  chevL:   'M15 18l-6-6 6-6',
+  chevR:   'M9 18l6-6-6-6',
+  play:    'M5 3l14 9-14 9z',
+  table:   'M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18',
+  filter:  'M22 3H2l8 9.46V19l4 2V12.46z',
+  refresh: 'M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0 1 14.85-3.36L23 10 M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
+  download:'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
+};
+
+const Ic=({name,size=16,color=C.t2,style={}})=>(
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={style}>
+    <path d={ICONS[name]}/>
+  </svg>
+);
+
+// ─── Chart Components ─────────────────────────────────────────
+const GlowLine=({data,color=C.acc,height=120,showDots=false})=>{
+  const W=300,H=100;
+  const max=Math.max(...data),min=Math.min(...data);
+  const py=v=>H-((v-min)/(max-min||1))*(H-16)-8;
+  const px=(_,i)=>i*(W/(data.length-1));
+  const pts=data.map((v,i)=>[px(null,i),py(v)]);
+  const line=pts.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const area=`${line} L${pts[pts.length-1][0]},${H} L0,${H} Z`;
+  const uid=color.replace(/[^\w]/g,'');
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{width:'100%',height,display:'block'}}>
+      <defs>
+        <linearGradient id={`lg${uid}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0.02"/>
+        </linearGradient>
+        <filter id={`gf${uid}`}>
+          <feGaussianBlur stdDeviation="2.2" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <path d={area} fill={`url(#lg${uid})`}/>
+      <path d={line} fill="none" stroke={color} strokeWidth="2.2" filter={`url(#gf${uid})`} strokeLinejoin="round"/>
+      {showDots&&pts.map((p,i)=><circle key={i} cx={p[0]} cy={p[1]} r="2.5" fill={color} filter={`url(#gf${uid})`}/>)}
+      <circle cx={pts[pts.length-1][0]} cy={pts[pts.length-1][1]} r="3.5" fill={color} filter={`url(#gf${uid})`}/>
+    </svg>
+  );
+};
+
+const GlowBars=({data,labels,colors,height=130})=>{
+  const max=Math.max(...data.map(Math.abs));
+  return(
+    <div style={{display:'flex',alignItems:'flex-end',gap:5,height,paddingBottom:labels?18:4}}>
+      {data.map((v,i)=>{
+        const col=colors?colors[i]:C.acc;
+        return(
+          <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4,height:'100%',justifyContent:'flex-end'}}>
+            <div style={{
+              width:'100%',height:`${(Math.abs(v)/max)*82}%`,
+              background:`linear-gradient(to top,${col},${col}cc)`,
+              borderRadius:'3px 3px 0 0',
+              boxShadow:`0 0 12px ${col}55`,
+              transition:'height 0.6s cubic-bezier(.22,1,.36,1)',
+              position:'relative',
+            }}>
+              <span style={{position:'absolute',top:-16,left:'50%',transform:'translateX(-50%)',fontSize:9,color:col,fontWeight:700,whiteSpace:'nowrap'}}>{v}{typeof v==='number'&&v<200?'%':''}</span>
+            </div>
+            {labels&&<span style={{fontSize:9,color:C.t3,textAlign:'center',lineHeight:1.2,position:'absolute',bottom:0}}>{labels[i]}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const ScatterPlot=({pts,color=C.acc,height=150})=>{
+  const W=300,H=120;
+  const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+  const mx=Math.max(...xs),mn=Math.min(...xs),my=Math.max(...ys),mny=Math.min(...ys);
+  const px=v=>((v-mn)/(mx-mn||1))*(W-24)+12;
+  const py=v=>H-((v-mny)/(my-mny||1))*(H-20)-10;
+  const n=pts.length,sx=xs.reduce((a,v)=>a+v,0),sy=ys.reduce((a,v)=>a+v,0);
+  const sxy=pts.reduce((a,p)=>a+p[0]*p[1],0),sx2=xs.reduce((a,v)=>a+v*v,0);
+  const slope=(n*sxy-sx*sy)/(n*sx2-sx*sx||1),int=(sy-slope*sx)/n;
+  const uid='scat';
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height,display:'block'}}>
+      <defs>
+        <filter id={`gfscat`}><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <line x1={px(mn)} y1={py(slope*mn+int)} x2={px(mx)} y2={py(slope*mx+int)}
+        stroke={C.warn} strokeWidth="1.5" strokeDasharray="4,3" filter="url(#gfscat)"/>
+      {pts.map((p,i)=>(
+        <circle key={i} cx={px(p[0])} cy={py(p[1])} r="3.5" fill={color} opacity="0.72" filter="url(#gfscat)"/>
+      ))}
+    </svg>
+  );
+};
+
+const WaterfallChart=({items,height=160})=>{
+  const maxAbs=Math.max(...items.map(i=>Math.abs(i.value)));
+  const W=items.length*52,H=90;
+  const uid='wfall';
+  return(
+    <svg viewBox={`0 0 ${W} ${H+28}`} style={{width:'100%',height,display:'block'}}>
+      <defs>
+        <filter id="gfwfall"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <line x1="0" y1={H*0.5} x2={W} y2={H*0.5} stroke={C.border} strokeWidth="1"/>
+      {items.map((item,i)=>{
+        const pos=item.value>=0;
+        const bh=Math.max((Math.abs(item.value)/maxAbs)*(H*0.45),4);
+        const x=i*52+4,bw=44;
+        const y=pos?H*0.5-bh:H*0.5;
+        const col=i===0||i===items.length-1?C.acc:pos?C.ok:C.err;
+        return(
+          <g key={i}>
+            <rect x={x} y={y} width={bw} height={bh} fill={col} opacity={0.85} rx="3" filter="url(#gfwfall)"/>
+            <text x={x+bw/2} y={H+22} textAnchor="middle" fontSize="7.5" fill={C.t3}>{item.label}</text>
+            <text x={x+bw/2} y={pos?y-5:y+bh+11} textAnchor="middle" fontSize="8.5" fill={col} fontWeight="700">
+              {item.value>0?'+':''}{item.value}%
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+};
+
+// ─── Primitives ───────────────────────────────────────────────
+const Card=({children,style={},glow=false,accent=C.acc,onClick})=>(
+  <div onClick={onClick} style={{
+    background:C.s1,border:`1px solid ${glow?accent+'40':C.border}`,
+    borderRadius:12,padding:20,position:'relative',overflow:'hidden',
+    boxShadow:glow?`0 0 28px ${accent}1a,0 2px 12px rgba(0,0,0,0.45)`:'0 2px 12px rgba(0,0,0,0.35)',
+    cursor:onClick?'pointer':'default',transition:'border-color 0.2s',
+    ...style,
+  }}>
+    {glow&&<div style={{position:'absolute',top:0,left:0,right:0,height:1,background:`linear-gradient(90deg,transparent,${accent}66,transparent)`}}/>}
+    {children}
+  </div>
+);
+
+const Badge=({children,color=C.acc})=>(
+  <span style={{padding:'2px 9px',borderRadius:20,background:`${color}1e`,border:`1px solid ${color}44`,color,fontSize:11,fontWeight:600,letterSpacing:'0.02em',display:'inline-block'}}>
+    {children}
+  </span>
+);
+
+const Btn=({children,onClick,color=C.acc,outline=false,size='sm',icon})=>(
+  <button onClick={onClick} style={{
+    background:outline?'transparent':color,border:`1px solid ${outline?C.border:color}`,
+    borderRadius:8,color:outline?C.t2:'white',
+    padding:size==='sm'?'7px 14px':'9px 20px',
+    fontSize:size==='sm'?12:13,fontWeight:600,cursor:'pointer',
+    display:'inline-flex',alignItems:'center',gap:6,
+    boxShadow:outline?'none':`0 0 18px ${color}33`,
+    transition:'all 0.15s',
+  }}>
+    {icon&&<Ic name={icon} size={12} color={outline?C.t2:'white'}/>}
+    {children}
+  </button>
+);
+
+const Toggle=({on})=>(
+  <div style={{width:38,height:21,borderRadius:11,background:on?C.acc:C.s3,position:'relative',cursor:'pointer',transition:'background 0.2s',flexShrink:0}}>
+    <div style={{position:'absolute',top:3,left:on?18:3,width:15,height:15,borderRadius:'50%',background:'white',transition:'left 0.2s',boxShadow:'0 1px 4px rgba(0,0,0,0.35)'}}/>
+  </div>
+);
+
+// ─── Sidebar ──────────────────────────────────────────────────
+const NAV=[
+  {id:'query',   label:'智能问数',   icon:'brain'},
+  {id:'dashboard',label:'数据看板',  icon:'grid'},
+  {id:'attribution',label:'归因分析',icon:'attr'},
+  {id:'prediction',label:'趋势预测', icon:'trend'},
+  {id:'regression',label:'回归分析', icon:'regline'},
+  {id:'regtest', label:'回归测试',   icon:'test'},
+  {id:'datasource',label:'数据源管理',icon:'db'},
+  {id:'export',  label:'报告导出',   icon:'export'},
+  {id:'users',   label:'权限管理',   icon:'users'},
+  {id:'history', label:'历史记录',   icon:'history'},
+  {id:'config',  label:'参数配置',   icon:'settings'},
+];
+
+const Sidebar=({active,onNav,collapsed,onToggle})=>(
+  <div style={{width:collapsed?58:224,background:C.s1,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',transition:'width 0.22s ease',flexShrink:0,overflow:'hidden'}}>
+    <div style={{height:56,display:'flex',alignItems:'center',gap:10,padding:collapsed?'0 15px':'0 20px',borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+      <div style={{width:30,height:30,borderRadius:9,background:`linear-gradient(135deg,${C.acc},${C.purple})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:`0 0 18px ${C.accG}`,animation:'glow 3s ease infinite'}}>
+        <span style={{fontSize:14,fontWeight:800,color:'white'}}>B</span>
+      </div>
+      {!collapsed&&<span style={{fontSize:15,fontWeight:700,color:C.t1,whiteSpace:'nowrap',letterSpacing:'-0.01em'}}>ChatBI</span>}
+    </div>
+    <nav style={{flex:1,padding:'6px 0',overflowY:'auto',overflowX:'hidden'}}>
+      {NAV.map(item=>{
+        const on=active===item.id;
+        return(
+          <button key={item.id} onClick={()=>onNav(item.id)} style={{
+            width:'100%',display:'flex',alignItems:'center',gap:10,
+            padding:collapsed?'10px 19px':'10px 20px',
+            background:on?`${C.acc}18`:'transparent',
+            border:'none',borderLeft:`2.5px solid ${on?C.acc:'transparent'}`,
+            cursor:'pointer',transition:'all 0.15s',
+            color:on?C.accL:C.t2,
+          }}>
+            <span style={{flexShrink:0}}><Ic name={item.icon} size={15} color={on?C.accL:C.t2}/></span>
+            {!collapsed&&<span style={{fontSize:13,whiteSpace:'nowrap',fontWeight:on?600:400,letterSpacing:on?'-0.01em':0}}>{item.label}</span>}
+          </button>
+        );
+      })}
+    </nav>
+    <button onClick={onToggle} style={{height:44,display:'flex',alignItems:'center',justifyContent:collapsed?'center':'flex-start',gap:8,padding:collapsed?'0 19px':'0 20px',background:'transparent',border:'none',borderTop:`1px solid ${C.border}`,cursor:'pointer'}}>
+      <Ic name={collapsed?'chevR':'chevL'} size={13} color={C.t3}/>
+      {!collapsed&&<span style={{fontSize:11,color:C.t3}}>收起导航</span>}
+    </button>
+  </div>
+);
+
+// ─── Header ───────────────────────────────────────────────────
+const Header=({title,icon})=>(
+  <div style={{height:56,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 24px',borderBottom:`1px solid ${C.border}`,background:C.bg,flexShrink:0}}>
+    <div style={{display:'flex',alignItems:'center',gap:9}}>
+      <Ic name={icon} size={15} color={C.acc}/>
+      <span style={{fontSize:14,fontWeight:600,color:C.t1}}>{title}</span>
+    </div>
+    <div style={{display:'flex',alignItems:'center',gap:18}}>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <div style={{width:8,height:8,borderRadius:'50%',background:C.ok,boxShadow:`0 0 8px ${C.ok}`}}/>
+        <span style={{fontSize:11,color:C.t3}}>所有数据源正常</span>
+      </div>
+      <button style={{background:'transparent',border:'none',cursor:'pointer',position:'relative',display:'flex'}}>
+        <Ic name="bell" size={16} color={C.t2}/>
+        <div style={{position:'absolute',top:-1,right:-1,width:7,height:7,borderRadius:'50%',background:C.err,border:`1.5px solid ${C.bg}`}}/>
+      </button>
+      <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+        <div style={{width:30,height:30,borderRadius:'50%',background:`linear-gradient(135deg,${C.purple},${C.acc})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white',flexShrink:0}}>张</div>
+        <div style={{lineHeight:1.2}}>
+          <div style={{fontSize:12,color:C.t1,fontWeight:600}}>张三</div>
+          <div style={{fontSize:10,color:C.t3}}>管理员</div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+// ═══════════════════════════════════════════════════════
+//  QUERY PAGE — 全流程执行日志版
+// ═══════════════════════════════════════════════════════
+const SAMPLES=['过去30天GMV趋势分析','各渠道转化率对比','用户留存率下降归因','Q1 vs Q2 核心指标','预测下月销售额','人均消费与复购率关系'];
+
+const MOCK={
+  insight:'GMV整体呈上升趋势，过去30天累计 ¥2,847万，环比增长 +18.3%。峰值出现在4月19日（周六），达到 ¥124万，节假日效应显著。近7天增速有所放缓，建议关注渠道流量结构变化。',
+  sql:'SELECT\n  date,\n  SUM(order_amount)      AS gmv,\n  COUNT(*)               AS orders,\n  COUNT(DISTINCT uid)    AS uv\nFROM orders\nWHERE\n  date >= DATEADD(day, -30, GETDATE())\n  AND status NOT IN (\'cancelled\', \'refunded\')\nGROUP BY date\nORDER BY date ASC',
+  chart:[42,48,51,47,55,58,53,63,68,65,73,70,76,79,72,81,84,80,89,93,88,96,99,95,103,109,105,113,116,111],
+  table:[
+    {date:'2026-04-27',gmv:'¥116万',orders:8510,uv:32400,cvr:'26.3%'},
+    {date:'2026-04-26',gmv:'¥113万',orders:8250,uv:31900,cvr:'25.9%'},
+    {date:'2026-04-25',gmv:'¥109万',orders:8020,uv:31200,cvr:'25.7%'},
+    {date:'2026-04-24',gmv:'¥105万',orders:7740,uv:30800,cvr:'25.1%'},
+    {date:'2026-04-23',gmv:'¥116万',orders:8480,uv:32100,cvr:'26.4%'},
+  ],
+};
+
+// log entry colors / prefixes
+const LOG_STYLE={
+  step:   {color:'#60A5FA',prefix:'◆',bold:true},
+  info:   {color:'#8BAAC8',prefix:'›',bold:false},
+  success:{color:'#10B981',prefix:'✓',bold:false},
+  error:  {color:'#F06060',prefix:'✗',bold:false},
+  sql:    {color:'#22D3EE',prefix:'',bold:false},
+  data:   {color:'#F59E0B',prefix:'↳',bold:false},
+  warn:   {color:'#F59E0B',prefix:'⚠',bold:false},
+};
+
+const LogLine=({entry})=>{
+  const st=LOG_STYLE[entry.type]||LOG_STYLE.info;
+  if(entry.type==='sql') return(
+    <div style={{marginBottom:8,animation:'fadeUp 0.2s ease forwards'}}>
+      <span style={{fontFamily:'monospace',fontSize:10.5,color:'#4A6685'}}>[{entry.time}] </span>
+      <span style={{fontFamily:'monospace',fontSize:10.5,color:C.cyan}}>✎ SQL 生成完毕</span>
+      <pre style={{
+        background:'#02070F',border:`1px solid ${C.cyan}28`,
+        borderLeft:`3px solid ${C.cyan}66`,
+        borderRadius:'0 6px 6px 0',padding:'9px 14px',
+        margin:'6px 0 4px',color:C.cyan,fontSize:11,
+        lineHeight:1.85,overflow:'auto',whiteSpace:'pre',
+        fontFamily:"'Fira Code','Cascadia Code',monospace",
+      }}>{entry.text}</pre>
+    </div>
+  );
+  return(
+    <div style={{
+      fontFamily:'monospace',fontSize:11,lineHeight:1.7,
+      marginBottom:2,color:st.color,
+      fontWeight:st.bold?700:400,
+      animation:'fadeUp 0.2s ease forwards',
+    }}>
+      <span style={{color:'#2A4060',userSelect:'none'}}>[{entry.time}]&nbsp;</span>
+      <span style={{opacity:0.6}}>{st.prefix}&nbsp;</span>
+      <span>{entry.text}</span>
+    </div>
+  );
+};
+
+const QueryPage=()=>{
+  const[input,setInput]=useState('');
+  const[state,setState]=useState('idle');
+  const[logs,setLogs]=useState([]);
+  const[result,setResult]=useState(null);
+  const[tab,setTab]=useState('chart');
+  const logRef=useRef();
+
+  const ts=()=>new Date().toTimeString().slice(0,8);
+
+  const buildSteps=(q)=>[
+    {delay:60,   type:'step',    text:`开始执行 → "${q}"`},
+    {delay:220,  type:'info',    text:'NLU 模型解析用户意图...'},
+    {delay:700,  type:'success', text:`意图: 趋势分析  ·  指标: GMV  ·  粒度: 日  ·  时间范围: 近30天`},
+    {delay:950,  type:'info',    text:'向 GPT-4o 发起 SQL 生成请求 (temperature=0.2)...'},
+    {delay:1200, type:'sql',     text:`SELECT\n  date,\n  SUM(order_amount)      AS gmv,\n  COUNT(*)               AS orders,\n  COUNT(DISTINCT uid)    AS uv\nFROM orders\nWHERE\n  date >= DATEADD(day, -30, GETDATE())\n  AND status NOT IN ('cancelled', 'refunded')\nGROUP BY date\nORDER BY date ASC`},
+    {delay:2000, type:'success', text:`SQL 生成完成  ·  用量: 318 tokens  ·  耗时: 0.82s`},
+    {delay:2180, type:'info',    text:'路由到数据源: 生产 MySQL 8.0  (10.0.1.5:3306)...'},
+    {delay:2400, type:'success', text:'连接成功  ·  RTT: 11ms  ·  连接池: 46/50 可用'},
+    {delay:2550, type:'info',    text:'提交查询到执行引擎...'},
+    {delay:2780, type:'data',    text:'命中索引 idx_date_status  ·  扫描 142,831 行  ·  过滤后 30 行'},
+    {delay:2980, type:'data',    text:'返回 30行 × 4列  ·  体积: 3.1 KB  ·  查询耗时: 0.63s'},
+    {delay:3100, type:'info',    text:'推断最优可视化方案...'},
+    {delay:3280, type:'success', text:'推荐: 折线图 (时序连续趋势)  ·  置信度: 97%'},
+    {delay:3450, type:'info',    text:'调用 AI 生成分析洞察...'},
+    {delay:3700, type:'success', text:'洞察生成完成  ·  耗时: 0.41s'},
+    {delay:3850, type:'step',    text:'━━ ✓ 全流程完成  ·  总耗时: 2.48s  ━━'},
+  ];
+
+  const doQuery=useCallback((q=input)=>{
+    if(!q.trim())return;
+    setInput(q);setState('running');setLogs([]);setResult(null);setTab('chart');
+    buildSteps(q).forEach(({delay,type,text})=>{
+      setTimeout(()=>{
+        setLogs(ls=>[...ls,{time:ts(),type,text}]);
+      },delay);
+    });
+    setTimeout(()=>{setState('done');setResult({...MOCK,query:q});},4100);
+  },[input]);
+
+  useEffect(()=>{
+    if(logRef.current)logRef.current.scrollTop=logRef.current.scrollHeight;
+  },[logs]);
+
+  return(
+    <div style={{height:'100%',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      {/* ── Search bar ── */}
+      <div style={{padding:'18px 24px 0',flexShrink:0}}>
+        <div style={{
+          display:'flex',alignItems:'center',gap:12,
+          background:C.s2,border:`1px solid ${C.bh}`,borderRadius:14,
+          padding:'11px 14px',
+          boxShadow:`0 0 40px ${C.accG},0 4px 20px rgba(0,0,0,0.3)`,
+        }}>
+          <Ic name="search" size={18} color={C.acc}/>
+          <input value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>e.key==='Enter'&&doQuery()}
+            placeholder="用自然语言描述你想了解的数据问题..."
+            style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.t1,fontSize:14,caretColor:C.acc}}/>
+          <select style={{background:C.s3,border:`1px solid ${C.border}`,borderRadius:6,color:C.t2,fontSize:11,padding:'4px 8px',outline:'none',cursor:'pointer',flexShrink:0}}>
+            <option>GPT-4o</option><option>Claude 3.5</option><option>DeepSeek-V3</option>
+          </select>
+          <button onClick={()=>doQuery()} style={{
+            background:state==='running'?C.s3:C.acc,border:'none',borderRadius:9,
+            width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',
+            cursor:state==='running'?'not-allowed':'pointer',
+            boxShadow:state==='running'?'none':`0 0 20px ${C.accG}`,flexShrink:0,
+            transition:'all 0.2s',
+          }}>
+            {state==='running'
+              ?<div style={{width:14,height:14,borderRadius:'50%',border:`2px solid ${C.t3}`,borderTopColor:'transparent',animation:'spin 0.8s linear infinite'}}/>
+              :<Ic name="send" size={13} color="white"/>}
+          </button>
+        </div>
+        {state==='idle'&&(
+          <div style={{display:'flex',gap:7,marginTop:11,flexWrap:'wrap'}}>
+            {SAMPLES.map(q=>(
+              <button key={q} onClick={()=>doQuery(q)} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:20,color:C.t2,fontSize:11,padding:'5px 12px',cursor:'pointer',transition:'all 0.15s'}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=C.acc;e.currentTarget.style.color=C.accL;}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.t2;}}
+              >{q}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Body ── */}
+      <div style={{flex:1,overflow:'hidden',padding:'16px 24px 20px',display:'flex',gap:16}}>
+
+        {/* Empty state */}
+        {state==='idle'&&(
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:20,opacity:0.5}}>
+            <div style={{width:72,height:72,borderRadius:20,background:`linear-gradient(135deg,${C.acc},${C.purple})`,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:`0 0 40px ${C.accG}`}}>
+              <Ic name="brain" size={32} color="white"/>
+            </div>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:17,fontWeight:700,color:C.t1,marginBottom:6}}>智能问数引擎就绪</div>
+              <div style={{fontSize:13,color:C.t3}}>输入自然语言 · 自动解析意图 · 生成 SQL · 全流程可见</div>
+            </div>
+          </div>
+        )}
+
+        {/* Running / Done — split layout */}
+        {state!=='idle'&&(
+          <>
+            {/* ── Left: Execution Log ── */}
+            <div style={{width:370,flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              {/* Terminal chrome */}
+              <div style={{
+                background:'#0A1628',border:`1px solid ${C.border}`,
+                borderRadius:'10px 10px 0 0',
+                padding:'8px 14px',display:'flex',alignItems:'center',gap:8,
+                borderBottom:`1px solid ${C.border}`,flexShrink:0,
+              }}>
+                <div style={{display:'flex',gap:5}}>
+                  {['#FF5F57','#FFBD2E','#28C840'].map(c=><div key={c} style={{width:10,height:10,borderRadius:'50%',background:c}}/>)}
+                </div>
+                <span style={{fontFamily:'monospace',fontSize:11,color:C.t3,flex:1,textAlign:'center'}}>执行日志</span>
+                {state==='running'&&(
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <div style={{width:6,height:6,borderRadius:'50%',background:C.ok,animation:'pulse 0.9s ease infinite'}}/>
+                    <span style={{fontSize:10,color:C.ok,fontFamily:'monospace'}}>运行中</span>
+                  </div>
+                )}
+                {state==='done'&&<Badge color={C.ok}>已完成</Badge>}
+              </div>
+              <div ref={logRef} style={{
+                flex:1,overflowY:'auto',
+                background:'#030A14',
+                border:`1px solid ${C.border}`,borderTop:'none',
+                borderRadius:'0 0 10px 10px',
+                padding:'14px 14px 14px',
+              }}>
+                {logs.map((e,i)=><LogLine key={i} entry={e}/>)}
+                {state==='running'&&(
+                  <span style={{fontFamily:'monospace',fontSize:11,color:'#2A4060',animation:'pulse 1s ease infinite'}}>█</span>
+                )}
+              </div>
+            </div>
+
+            {/* ── Right: Results ── */}
+            <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:14}}>
+              {state==='running'&&(
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:14,opacity:0.45}}>
+                  <div style={{width:44,height:44,borderRadius:'50%',border:`3px solid ${C.acc}`,borderTopColor:'transparent',animation:'spin 1s linear infinite'}}/>
+                  <div style={{fontSize:13,color:C.t2}}>正在执行，结果即将呈现...</div>
+                </div>
+              )}
+              {state==='done'&&result&&(
+                <div style={{display:'flex',flexDirection:'column',gap:14}} className="fade-up">
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <Badge color={C.acc}>查询</Badge>
+                    <span style={{fontSize:14,color:C.t1,fontWeight:500,flex:1}}>{result.query}</span>
+                    <button onClick={()=>{setState('idle');setInput('');setLogs([]);}} style={{background:'transparent',border:'none',cursor:'pointer'}}><Ic name="close" size={14} color={C.t3}/></button>
+                  </div>
+
+                  <Card glow accent={C.purple} style={{padding:16}}>
+                    <div style={{display:'flex',gap:12}}>
+                      <div style={{width:32,height:32,borderRadius:9,background:`linear-gradient(135deg,${C.acc},${C.purple})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                        <Ic name="spark" size={14} color="white"/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:C.purple,fontWeight:600,marginBottom:6,letterSpacing:'0.05em'}}>AI INSIGHT</div>
+                        <div style={{fontSize:13,color:C.t2,lineHeight:1.8}}>{result.insight}</div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <div style={{display:'flex',alignItems:'center',borderBottom:`1px solid ${C.border}`,marginBottom:16,marginTop:-4}}>
+                      {[['chart','📈 趋势图'],['table','📋 数据表'],['sql','</> SQL']].map(([id,label])=>(
+                        <button key={id} onClick={()=>setTab(id)} style={{
+                          padding:'8px 16px',background:'transparent',border:'none',
+                          borderBottom:`2px solid ${tab===id?C.acc:'transparent'}`,
+                          color:tab===id?C.accL:C.t3,fontSize:12,cursor:'pointer',
+                          fontWeight:tab===id?600:400,transition:'all 0.15s',marginBottom:-1,
+                        }}>{label}</button>
+                      ))}
+                      <div style={{marginLeft:'auto',display:'flex',gap:7,paddingBottom:8}}>
+                        <Badge color={C.ok}>¥2,847万</Badge>
+                        <Badge color={C.ok}>+18.3%</Badge>
+                      </div>
+                    </div>
+                    {tab==='chart'&&(
+                      <div>
+                        <div style={{fontSize:11,color:C.t3,marginBottom:8}}>过去30天 GMV 趋势（万元）</div>
+                        <GlowLine data={result.chart} color={C.acc} height={160}/>
+                      </div>
+                    )}
+                    {tab==='table'&&(
+                      <table style={{width:'100%',borderCollapse:'collapse'}}>
+                        <thead><tr>{['日期','GMV','订单数','UV','转化率'].map(h=>(
+                          <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:11,color:C.t3,borderBottom:`1px solid ${C.border}`,fontWeight:600,letterSpacing:'0.04em'}}>{h}</th>
+                        ))}</tr></thead>
+                        <tbody>{result.table.map((r,i)=>(
+                          <tr key={i} onMouseEnter={e=>e.currentTarget.style.background=C.s2} onMouseLeave={e=>e.currentTarget.style.background='transparent'} style={{borderBottom:`1px solid ${C.border}`,transition:'background 0.1s'}}>
+                            <td style={{padding:'9px 12px',fontSize:12,color:C.t2}}>{r.date}</td>
+                            <td style={{padding:'9px 12px',fontSize:12,color:C.ok,fontWeight:700}}>{r.gmv}</td>
+                            <td style={{padding:'9px 12px',fontSize:12,color:C.t1}}>{r.orders.toLocaleString()}</td>
+                            <td style={{padding:'9px 12px',fontSize:12,color:C.t1}}>{r.uv.toLocaleString()}</td>
+                            <td style={{padding:'9px 12px',fontSize:12,color:C.accL}}>{r.cvr}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    )}
+                    {tab==='sql'&&(
+                      <pre style={{background:C.bg,borderRadius:8,padding:16,fontSize:12,color:C.cyan,lineHeight:1.85,border:`1px solid ${C.border}`,overflow:'auto',fontFamily:"'Fira Code',monospace"}}>{result.sql}</pre>
+                    )}
+                  </Card>
+
+                  <div>
+                    <div style={{fontSize:11,color:C.t3,marginBottom:9}}>相关追问</div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      {['按渠道拆分GMV','对比上月趋势','预测下月GMV','拆解转化漏斗','导出此报告'].map(q=>(
+                        <button key={q} onClick={()=>doQuery(q)} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:20,color:C.t2,fontSize:12,padding:'6px 14px',cursor:'pointer',display:'flex',alignItems:'center',gap:6,transition:'all 0.15s'}}
+                          onMouseEnter={e=>{e.currentTarget.style.borderColor=C.acc;e.currentTarget.style.color=C.accL;}}
+                          onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.t2;}}
+                        ><Ic name="spark" size={10} color={C.acc}/>{q}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  DASHBOARD PAGE
+// ═══════════════════════════════════════════════════════
+const DashboardPage=()=>{
+  const metrics=[
+    {label:'今日 GMV',value:'¥284.7万',change:'+18.3%',up:true,spark:[30,35,28,43,39,46,52,49,56,61,59,66],color:C.ok},
+    {label:'活跃用户',value:'32,100',change:'+12.1%',up:true,spark:[22,25,21,29,31,27,33,30,36,32,35,33],color:C.acc},
+    {label:'转化率',value:'26.2%',change:'-1.3%',up:false,spark:[28,27,30,26,29,25,28,24,27,25,28,26],color:C.err},
+    {label:'客单价',value:'¥338',change:'+5.7%',up:true,spark:[310,320,316,325,319,331,326,336,329,339,333,341],color:C.purple},
+  ];
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:18}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}}>
+        {metrics.map((m,i)=>(
+          <Card key={i} glow={i===0} style={{padding:'16px 18px'}}>
+            <div style={{position:'absolute',bottom:0,right:0,width:80,opacity:0.55}}>
+              <GlowLine data={m.spark} color={m.color} height={44}/>
+            </div>
+            <div style={{fontSize:10,color:C.t3,letterSpacing:'0.06em',textTransform:'uppercase',marginBottom:9}}>{m.label}</div>
+            <div style={{fontSize:24,fontWeight:700,color:C.t1,letterSpacing:'-0.02em',marginBottom:7}}>{m.value}</div>
+            <div style={{display:'flex',alignItems:'center',gap:5}}>
+              <span style={{fontSize:11,color:m.up?C.ok:C.err,fontWeight:700}}>{m.up?'▲':'▼'} {m.change}</span>
+              <span style={{fontSize:10,color:C.t3}}>vs上周</span>
+            </div>
+          </Card>
+        ))}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,flex:1,minHeight:0}}>
+        <Card style={{display:'flex',flexDirection:'column'}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:3}}>GMV 趋势</div>
+          <div style={{fontSize:11,color:C.t3,marginBottom:16}}>近30天每日销售额（万元）</div>
+          <div style={{flex:1}}>
+            <GlowLine data={[42,48,51,47,55,58,53,63,68,65,73,70,76,79,72,81,84,80,89,93,88,96,99,95,103,109,105,113,116,111]} color={C.acc} height={200}/>
+          </div>
+        </Card>
+        <div style={{display:'flex',flexDirection:'column',gap:14}}>
+          <Card style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:3}}>渠道贡献</div>
+            <div style={{fontSize:11,color:C.t3,marginBottom:14}}>GMV 占比（%）</div>
+            <GlowBars data={[42,28,18,8,4]} labels={['直营','直播','搜索','推荐','其他']} colors={[C.acc,C.purple,C.cyan,C.ok,C.t3]} height={130}/>
+          </Card>
+          <Card style={{padding:16}}>
+            <div style={{fontSize:12,fontWeight:600,color:C.t1,marginBottom:12}}>实时告警</div>
+            {[{msg:'转化率连续3天下滑',level:'warn'},{msg:'直播渠道流量异常波动',level:'warn'},{msg:'退款率超过阈值 8%',level:'err'}].map((a,i)=>(
+              <div key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                <div style={{width:6,height:6,borderRadius:'50%',background:a.level==='err'?C.err:C.warn,flexShrink:0,boxShadow:`0 0 6px ${a.level==='err'?C.err:C.warn}`}}/>
+                <span style={{fontSize:11,color:C.t2}}>{a.msg}</span>
+              </div>
+            ))}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  ATTRIBUTION PAGE
+// ═══════════════════════════════════════════════════════
+const AttributionPage=()=>{
+  const factors=[
+    {label:'基线',value:38},{label:'促销',value:22},{label:'直播',value:18},
+    {label:'SEO',value:15},{label:'退款',value:-8},{label:'竞品',value:-5},{label:'合计',value:80},
+  ];
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:18}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:C.t1}}>GMV 增长归因分析</div>
+          <div style={{fontSize:12,color:C.t3,marginTop:3}}>2026-04-01 至 04-27，对比上月同期</div>
+        </div>
+        <Badge color={C.ok}>整体 +18.3%</Badge>
+      </div>
+      <Card>
+        <div style={{fontSize:11,color:C.t3,marginBottom:16}}>瀑布归因图 — 各因子贡献</div>
+        <WaterfallChart items={factors} height={160}/>
+      </Card>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+        {[
+          {label:'促销活动',value:'+22%',desc:'联名活动带来额外曝光及购买转化',color:C.ok},
+          {label:'直播带货',value:'+18%',desc:'头部主播专场，单场贡献超 ¥40万',color:C.purple},
+          {label:'SEO 流量',value:'+15%',desc:'长尾关键词优化拉动自然流量增长',color:C.acc},
+          {label:'退款增加',value:'-8%',desc:'质检批次问题导致退款率上升',color:C.err},
+          {label:'竞品冲击',value:'-5%',desc:'竞品大促期间流量被部分分流',color:C.err},
+          {label:'季节基础',value:'+38%',desc:'春季需求旺季，基准消费提升',color:C.cyan},
+        ].map((item,i)=>(
+          <Card key={i} style={{padding:14}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
+              <span style={{fontSize:12,color:C.t2,fontWeight:600}}>{item.label}</span>
+              <Badge color={item.color}>{item.value}</Badge>
+            </div>
+            <div style={{fontSize:11,color:C.t3,lineHeight:1.6}}>{item.desc}</div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  PREDICTION PAGE
+// ═══════════════════════════════════════════════════════
+const PredictionPage=()=>{
+  const hist=[65,70,68,75,72,81,78,85,83,91,88,95,93,99,97,103,101,109,107,113,111,116,114,119,117,121,119,125,123,126];
+  const pred=[129,133,136,131,139,143,146,141,149,153,156,159];
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:18}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:C.t1}}>GMV 趋势预测</div>
+          <div style={{fontSize:12,color:C.t3,marginTop:3}}>时序模型 · Prophet · 置信区间 95%</div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <Badge color={C.acc}>历史</Badge>
+          <Badge color={C.warn}>预测</Badge>
+        </div>
+      </div>
+      <Card>
+        <div style={{fontSize:11,color:C.t3,marginBottom:12}}>近30天历史 + 未来12天预测（万元）</div>
+        <div style={{position:'relative'}}>
+          <GlowLine data={[...hist,...pred]} color={C.acc} height={220}/>
+          <div style={{
+            position:'absolute',top:0,right:0,bottom:0,
+            width:`${(pred.length/(hist.length+pred.length))*100}%`,
+            background:'rgba(245,158,11,0.04)',
+            borderLeft:`1.5px dashed ${C.warn}55`,
+            pointerEvents:'none',
+          }}>
+            <span style={{position:'absolute',top:8,left:8,fontSize:10,color:C.warn}}>预测区间</span>
+          </div>
+        </div>
+      </Card>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+        {[
+          {label:'明日预测',value:'¥129万',sub:'区间 ¥119–139万',color:C.warn},
+          {label:'本周预测',value:'¥874万',sub:'区间 ¥825–923万',color:C.warn},
+          {label:'模型准确率',value:'94.2%',sub:'MAE: 3.8%',color:C.ok},
+          {label:'趋势方向',value:'上升',sub:'斜率 +2.1/天',color:C.ok},
+        ].map((m,i)=>(
+          <Card key={i} style={{padding:'14px 16px'}}>
+            <div style={{fontSize:10,color:C.t3,marginBottom:8}}>{m.label}</div>
+            <div style={{fontSize:20,fontWeight:700,color:C.t1,marginBottom:4}}>{m.value}</div>
+            <div style={{fontSize:11,color:m.color}}>{m.sub}</div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  REGRESSION PAGE
+// ═══════════════════════════════════════════════════════
+const RegressionPage=()=>{
+  const[selXs,setSelXs]=useState(['UV','转化率']);
+  const scatterPts=Array.from({length:28},(_,i)=>[i*3+Math.random()*9,i*2.1+10+Math.random()*16]);
+  const features=['UV','转化率','客单价','广告投放','促销力度','天气指数','节假日'];
+  const toggleX=f=>setSelXs(xs=>xs.includes(f)?xs.filter(x=>x!==f):[...xs,f]);
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:18}}>
+      <div style={{fontSize:15,fontWeight:700,color:C.t1}}>回归分析</div>
+      <div style={{display:'grid',gridTemplateColumns:'300px 1fr',gap:16}}>
+        <Card>
+          <div style={{fontSize:12,color:C.t3,marginBottom:14}}>变量配置</div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:C.t3,marginBottom:6}}>因变量 Y</div>
+            <select style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:6,color:C.t1,fontSize:12,padding:'7px 10px',width:'100%',outline:'none'}}>
+              {['GMV','订单量','利润率'].map(v=><option key={v}>{v}</option>)}
+            </select>
+          </div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:C.t3,marginBottom:8}}>自变量 X（多选）</div>
+            {features.map(f=>(
+              <label key={f} onClick={()=>toggleX(f)} style={{display:'flex',alignItems:'center',gap:9,marginBottom:7,cursor:'pointer'}}>
+                <div style={{width:15,height:15,borderRadius:4,border:`2px solid ${selXs.includes(f)?C.acc:C.border}`,background:selXs.includes(f)?C.acc:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  {selXs.includes(f)&&<Ic name="check" size={8} color="white"/>}
+                </div>
+                <span style={{fontSize:12,color:selXs.includes(f)?C.t1:C.t2}}>{f}</span>
+              </label>
+            ))}
+          </div>
+          <Btn onClick={()=>{}} color={C.acc} icon="play">运行回归</Btn>
+        </Card>
+        <div style={{display:'flex',flexDirection:'column',gap:14}}>
+          <Card>
+            <div style={{fontSize:11,color:C.t3,marginBottom:8}}>散点图 · UV vs GMV（带回归线）</div>
+            <ScatterPlot pts={scatterPts} color={C.acc} height={160}/>
+          </Card>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+            {[['R²','0.847',C.ok],['p 值','< 0.001',C.ok],['系数','2.21',C.accL],['截距','10.3',C.accL]].map(([k,v,c])=>(
+              <Card key={k} style={{padding:'12px 14px',textAlign:'center'}}>
+                <div style={{fontSize:10,color:C.t3,marginBottom:6}}>{k}</div>
+                <div style={{fontSize:18,fontWeight:700,color:c}}>{v}</div>
+              </Card>
+            ))}
+          </div>
+          <Card>
+            <div style={{fontSize:11,color:C.t3,marginBottom:10}}>系数显著性</div>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr>{['变量','系数','标准误','t值','显著性'].map(h=><th key={h} style={{padding:'6px 10px',textAlign:'left',fontSize:10,color:C.t3,borderBottom:`1px solid ${C.border}`,fontWeight:600}}>{h}</th>)}</tr></thead>
+              <tbody>{[
+                ['UV','2.21','0.18','12.28','***'],
+                ['转化率','1.84','0.23','8.00','***'],
+                ['客单价','0.93','0.31','3.00','**'],
+              ].map((r,i)=>(
+                <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                  {r.map((v,j)=><td key={j} style={{padding:'7px 10px',fontSize:11,color:j===4?C.ok:C.t2}}>{v}</td>)}
+                </tr>
+              ))}</tbody>
+            </table>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  DATA SOURCE PAGE
+// ═══════════════════════════════════════════════════════
+const DataSourcePage=()=>{
+  const sources=[
+    {name:'生产数据库 MySQL',type:'MySQL 8.0',status:'ok',tables:142,sync:'2分钟前',size:'1.2 TB'},
+    {name:'数仓 Hive',type:'Hive 3.1',status:'ok',tables:680,sync:'15分钟前',size:'48 TB'},
+    {name:'埋点 ClickHouse',type:'ClickHouse 23',status:'ok',tables:38,sync:'1小时前',size:'6.4 TB'},
+    {name:'营销平台 API',type:'REST API',status:'warn',tables:12,sync:'3小时前',size:'—'},
+    {name:'第三方 ERP',type:'PostgreSQL 15',status:'err',tables:0,sync:'失联',size:'—'},
+  ];
+  const sc={ok:C.ok,warn:C.warn,err:C.err};
+  const sl={ok:'已连接',warn:'连接异常',err:'已断开'};
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:C.t1}}>数据源管理</div>
+          <div style={{fontSize:12,color:C.t3,marginTop:3}}>共 {sources.length} 个数据源</div>
+        </div>
+        <Btn color={C.acc} icon="plus">新增数据源</Btn>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {sources.map((s,i)=>(
+          <Card key={i} style={{padding:16}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=C.bh}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}
+          >
+            <div style={{display:'flex',alignItems:'center',gap:14}}>
+              <div style={{width:40,height:40,borderRadius:10,background:`${sc[s.status]}18`,border:`1px solid ${sc[s.status]}33`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Ic name="db" size={18} color={sc[s.status]}/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:2}}>{s.name}</div>
+                <div style={{fontSize:11,color:C.t3}}>{s.type} · {s.tables} 张表 · {s.size}</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <Badge color={sc[s.status]}>{sl[s.status]}</Badge>
+                <div style={{fontSize:10,color:C.t3,marginTop:5}}>上次同步 {s.sync}</div>
+              </div>
+              <div style={{display:'flex',gap:7,marginLeft:8}}>
+                <Btn outline icon="refresh">同步</Btn>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  REG TEST PAGE — 问数质量测试台
+// ═══════════════════════════════════════════════════════
+const INIT_CASES=[
+  {id:'TC-001',query:'过去30天GMV趋势分析',model:'GPT-4o',status:'passed',score:96,latency:'1.81s',
+   intent:'趋势分析',metric:'GMV',dim:'日期',
+   sql:"SELECT\n  date,\n  SUM(order_amount) AS gmv\nFROM orders\nWHERE date >= DATEADD(day,-30,GETDATE())\nGROUP BY date\nORDER BY date ASC",
+   notes:'SQL准确，意图识别正确，图表类型推荐合理'},
+  {id:'TC-002',query:'各渠道转化率对比分析',model:'GPT-4o',status:'passed',score:88,latency:'2.14s',
+   intent:'对比分析',metric:'转化率',dim:'渠道',
+   sql:"SELECT\n  channel,\n  AVG(conversion_rate) AS cvr,\n  COUNT(*) AS sessions\nFROM sessions\nGROUP BY channel\nORDER BY cvr DESC",
+   notes:'维度识别准确，SQL逻辑正确，聚合方式合理'},
+  {id:'TC-003',query:'用户留存率下降原因归因',model:'GPT-4o',status:'failed',score:42,latency:'3.51s',
+   intent:'归因分析',metric:'留存率',dim:'原因维度',
+   sql:"SELECT * FROM retention\nWHERE date BETWEEN ... AND ...",
+   notes:'SQL不完整，缺少关键 JOIN 和下钻逻辑，结果无法支撑归因分析'},
+  {id:'TC-004',query:'预测下月整体销售额',model:'Claude 3.5',status:'passed',score:91,latency:'2.03s',
+   intent:'趋势预测',metric:'GMV',dim:'月',
+   sql:"SELECT\n  date,\n  predicted_gmv,\n  lower_bound,\n  upper_bound\nFROM gmv_forecast\nWHERE date BETWEEN\n  DATEADD(month,1,GETDATE())\n  AND DATEADD(month,2,GETDATE())",
+   notes:'预测意图识别正确，区间输出完整，时间边界准确'},
+  {id:'TC-005',query:'Q1 vs Q2 核心指标全面对比',model:'GPT-4o',status:'passed',score:94,latency:'1.96s',
+   intent:'对比分析',metric:'多指标',dim:'季度',
+   sql:"SELECT\n  DATEPART(quarter, date) AS q,\n  SUM(gmv)              AS gmv,\n  COUNT(*)              AS orders,\n  AVG(conversion_rate)  AS cvr\nFROM kpi\nWHERE DATEPART(quarter, date) IN (1,2)\nGROUP BY DATEPART(quarter, date)",
+   notes:'多指标拆解完整，分组逻辑正确'},
+  {id:'TC-006',query:'人均消费与复购率的相关性',model:'DeepSeek-V3',status:'warning',score:71,latency:'4.22s',
+   intent:'相关分析',metric:'人均消费/复购率',dim:'用户',
+   sql:"SELECT\n  avg_spend,\n  repurchase_rate\nFROM user_stats",
+   notes:'SQL过于简化，缺少分层逻辑和统计方法，建议补充相关系数计算'},
+];
+
+const ScoreBar=({score})=>{
+  const color=score>=90?C.ok:score>=70?C.warn:C.err;
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:7}}>
+      <div style={{width:56,height:4,borderRadius:2,background:C.s3,overflow:'hidden'}}>
+        <div style={{width:`${score}%`,height:'100%',background:color,borderRadius:2,boxShadow:`0 0 6px ${color}88`,transition:'width 0.6s ease'}}/>
+      </div>
+      <span style={{fontSize:11,color,fontWeight:700,minWidth:22}}>{score}</span>
+    </div>
+  );
+};
+
+// mini log runner for expanded run
+const CaseRunLog=({query,onDone})=>{
+  const[lines,setLines]=useState([]);
+  const logRef=useRef();
+  const ts=()=>new Date().toTimeString().slice(0,8);
+  useEffect(()=>{
+    const steps=[
+      {delay:80,  type:'info',   text:`解析查询意图: "${query.slice(0,30)}${query.length>30?'...':''}"`},
+      {delay:400, type:'success',text:'意图识别完成'},
+      {delay:650, type:'info',   text:'生成 SQL...'},
+      {delay:1200,type:'sql',    text:INIT_CASES.find(c=>c.query===query)?.sql||'SELECT ...'},
+      {delay:1800,type:'success',text:'SQL 生成完成'},
+      {delay:2000,type:'info',   text:'执行查询引擎...'},
+      {delay:2500,type:'data',   text:'返回结果集'},
+      {delay:2700,type:'success',text:'评测完成'},
+    ];
+    steps.forEach(({delay,type,text})=>{
+      setTimeout(()=>setLines(ls=>[...ls,{time:ts(),type,text}]),delay);
+    });
+    setTimeout(()=>onDone&&onDone(),2900);
+  },[]);
+  useEffect(()=>{if(logRef.current)logRef.current.scrollTop=logRef.current.scrollHeight;},[lines]);
+  return(
+    <div ref={logRef} style={{background:'#02070F',borderRadius:8,padding:'10px 12px',maxHeight:160,overflowY:'auto',border:`1px solid ${C.border}`,marginTop:10}}>
+      {lines.map((e,i)=><LogLine key={i} entry={e}/>)}
+      {lines.length===0&&<span style={{fontFamily:'monospace',fontSize:11,color:C.t3,animation:'pulse 1s ease infinite'}}>█</span>}
+    </div>
+  );
+};
+
+const RegTestPage=()=>{
+  const[cases,setCases]=useState(INIT_CASES);
+  const[expanded,setExpanded]=useState(null);
+  const[running,setRunning]=useState({}); // {id: true}
+  const[newQuery,setNewQuery]=useState('');
+  const[newModel,setNewModel]=useState('GPT-4o');
+  const[showAdd,setShowAdd]=useState(false);
+  const[runAllIdx,setRunAllIdx]=useState(-1);
+
+  const runOne=(id)=>{
+    setRunning(r=>({...r,[id]:true}));
+  };
+  const finishOne=(id)=>{
+    setRunning(r=>{const n={...r};delete n[id];return n;});
+  };
+
+  const runAll=()=>{
+    setRunAllIdx(0);
+    cases.forEach((c,i)=>{
+      setTimeout(()=>{
+        setRunning(r=>({...r,[c.id]:true}));
+        setRunAllIdx(i);
+        setTimeout(()=>setRunning(r=>{const n={...r};delete n[c.id];return n;}),2900);
+      },i*1200);
+    });
+    setTimeout(()=>setRunAllIdx(-1),cases.length*1200+3000);
+  };
+
+  const addCase=()=>{
+    if(!newQuery.trim())return;
+    const id=`TC-${String(cases.length+1).padStart(3,'0')}`;
+    setCases(cs=>[...cs,{id,query:newQuery,model:newModel,status:'idle',score:null,latency:null,sql:'',intent:'',metric:'',dim:'',notes:'待运行'}]);
+    setNewQuery('');setShowAdd(false);
+  };
+
+  const sc={passed:C.ok,failed:C.err,warning:C.warn,idle:C.t3};
+  const sl={passed:'通过',failed:'失败',warning:'警告',idle:'待测'};
+
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:16}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:C.t1}}>问数回归测试</div>
+          <div style={{fontSize:12,color:C.t3,marginTop:3}}>输入自然语言 Query，验证大模型意图理解 & SQL 生成质量</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <Btn outline onClick={()=>setShowAdd(s=>!s)} icon="plus">新增用例</Btn>
+          <Btn color={C.acc} icon="play" onClick={runAll}>全部运行</Btn>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+        {[
+          {label:'全部用例',value:cases.length,color:C.acc},
+          {label:'通过',value:cases.filter(c=>c.status==='passed').length,color:C.ok},
+          {label:'失败',value:cases.filter(c=>c.status==='failed').length,color:C.err},
+          {label:'警告',value:cases.filter(c=>c.status==='warning').length,color:C.warn},
+        ].map(s=>(
+          <Card key={s.label} style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+            <div style={{width:3,height:36,borderRadius:2,background:s.color,boxShadow:`0 0 8px ${s.color}`}}/>
+            <div>
+              <div style={{fontSize:24,fontWeight:700,color:s.color,lineHeight:1}}>{s.value}</div>
+              <div style={{fontSize:11,color:C.t3,marginTop:4}}>{s.label}</div>
+            </div>
+            {s.label==='通过'&&cases.length>0&&(
+              <div style={{marginLeft:'auto',fontSize:11,color:C.t3}}>{Math.round(s.value/cases.length*100)}%</div>
+            )}
+          </Card>
+        ))}
+      </div>
+
+      {/* Add case */}
+      {showAdd&&(
+        <Card glow accent={C.acc} style={{padding:16}} className="fade-up">
+          <div style={{fontSize:12,color:C.t3,marginBottom:10}}>新增测试用例</div>
+          <div style={{display:'flex',gap:10}}>
+            <input value={newQuery} onChange={e=>setNewQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCase()}
+              placeholder="输入自然语言查询，例：过去7天各城市GMV排名..."
+              style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:8,color:C.t1,fontSize:13,padding:'8px 12px',outline:'none'}}/>
+            <select value={newModel} onChange={e=>setNewModel(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:8,color:C.t2,fontSize:12,padding:'8px 10px',outline:'none',flexShrink:0}}>
+              <option>GPT-4o</option><option>Claude 3.5</option><option>DeepSeek-V3</option>
+            </select>
+            <Btn color={C.acc} onClick={addCase}>添加</Btn>
+            <Btn outline onClick={()=>setShowAdd(false)}>取消</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Cases */}
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {cases.map((c)=>{
+          const isExp=expanded===c.id;
+          const isRun=!!running[c.id];
+          return(
+            <div key={c.id}>
+              {/* Row */}
+              <div style={{
+                background:C.s1,border:`1px solid ${isExp?C.bh:C.border}`,
+                borderRadius:isExp?'10px 10px 0 0':10,padding:'13px 16px',
+                cursor:'pointer',transition:'border-color 0.2s',
+              }}
+                onMouseEnter={e=>{if(!isExp)e.currentTarget.style.borderColor=C.bh;}}
+                onMouseLeave={e=>{if(!isExp)e.currentTarget.style.borderColor=C.border;}}
+                onClick={()=>setExpanded(isExp?null:c.id)}
+              >
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  {/* status dot */}
+                  {isRun
+                    ?<div style={{width:16,height:16,borderRadius:'50%',border:`2px solid ${C.acc}`,borderTopColor:'transparent',animation:'spin 0.8s linear infinite',flexShrink:0}}/>
+                    :<div style={{width:8,height:8,borderRadius:'50%',background:sc[c.status],boxShadow:`0 0 7px ${sc[c.status]}`,flexShrink:0}}/>
+                  }
+                  <span style={{fontSize:11,color:C.t3,width:56,flexShrink:0,fontFamily:'monospace',fontWeight:600}}>{c.id}</span>
+
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,color:C.t1,fontWeight:500,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.query}</div>
+                    {c.intent&&<div style={{fontSize:10,color:C.t3}}>意图: {c.intent} · 指标: {c.metric} · 维度: {c.dim}</div>}
+                  </div>
+
+                  <span style={{fontSize:10,color:C.t3,padding:'2px 7px',background:C.s2,borderRadius:5,flexShrink:0}}>{c.model}</span>
+                  {c.score!=null&&<ScoreBar score={c.score}/>}
+                  {c.latency&&<span style={{fontSize:11,color:C.t3,width:42,textAlign:'right',flexShrink:0}}>{c.latency}</span>}
+                  <Badge color={sc[c.status]}>{sl[c.status]}</Badge>
+
+                  <button onClick={e=>{e.stopPropagation();runOne(c.id);}} style={{
+                    background:C.s3,border:`1px solid ${C.border}`,borderRadius:7,
+                    color:C.t2,fontSize:11,padding:'5px 10px',cursor:'pointer',
+                    display:'flex',alignItems:'center',gap:5,flexShrink:0,
+                  }}>
+                    <Ic name="play" size={9} color={C.acc}/>单跑
+                  </button>
+                  <div style={{transform:isExp?'rotate(90deg)':'rotate(-90deg)',transition:'transform 0.2s',flexShrink:0}}>
+                    <Ic name="chevR" size={13} color={C.t3}/>
+                  </div>
+                </div>
+              </div>
+
+              {/* Expanded */}
+              {isExp&&(
+                <div style={{
+                  background:`${C.s1}ee`,border:`1px solid ${C.bh}`,borderTop:'none',
+                  borderRadius:'0 0 10px 10px',padding:16,
+                  animation:'fadeUp 0.25s ease forwards',
+                }}>
+                  {isRun&&<CaseRunLog query={c.query} onDone={()=>finishOne(c.id)}/>}
+                  {!isRun&&(
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                      {/* SQL */}
+                      <div>
+                        <div style={{fontSize:11,color:C.t3,fontWeight:600,letterSpacing:'0.04em',marginBottom:8}}>生成的 SQL</div>
+                        <pre style={{
+                          background:'#02070F',borderRadius:8,padding:'11px 14px',
+                          fontSize:11,color:C.cyan,lineHeight:1.85,
+                          border:`1px solid ${C.cyan}22`,borderLeft:`3px solid ${C.cyan}55`,
+                          overflow:'auto',whiteSpace:'pre',
+                          fontFamily:"'Fira Code','Cascadia Code',monospace",
+                          maxHeight:200,
+                        }}>{c.sql||'(尚未运行)'}</pre>
+                      </div>
+                      {/* Scores + notes */}
+                      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                        <div>
+                          <div style={{fontSize:11,color:C.t3,fontWeight:600,letterSpacing:'0.04em',marginBottom:10}}>评测维度</div>
+                          {[
+                            {dim:'意图理解',score:c.score?Math.min(100,c.score+3):null},
+                            {dim:'SQL 准确性',score:c.score?Math.max(0,c.score-6):null},
+                            {dim:'结果相关性',score:c.score?Math.min(100,c.score+2):null},
+                            {dim:'响应效率',score:c.latency?Math.max(55,100-Math.round(parseFloat(c.latency)*12)):null},
+                          ].map(({dim,score})=>(
+                            <div key={dim} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+                              <span style={{fontSize:11,color:C.t2,width:82,flexShrink:0}}>{dim}</span>
+                              {score!=null?<ScoreBar score={score}/>:<span style={{fontSize:11,color:C.t3}}>—</span>}
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{background:C.s2,borderRadius:8,padding:'10px 12px',flex:1}}>
+                          <div style={{fontSize:10,color:C.t3,marginBottom:5,fontWeight:600,letterSpacing:'0.04em'}}>评测备注</div>
+                          <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>{c.notes||'暂无备注'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  HISTORY PAGE
+// ═══════════════════════════════════════════════════════
+const HistoryPage=()=>{
+  const sessions=[
+    {time:'今天 14:32',q:'过去30天GMV趋势分析',model:'GPT-4o',tokens:1240,status:'ok'},
+    {time:'今天 11:15',q:'用户留存率下降原因归因',model:'Claude 3.5',tokens:2180,status:'ok'},
+    {time:'今天 09:48',q:'各渠道转化率对比分析',model:'GPT-4o',tokens:980,status:'ok'},
+    {time:'昨天 16:20',q:'Q1 vs Q2 核心指标全面对比',model:'DeepSeek-V3',tokens:1560,status:'ok'},
+    {time:'昨天 10:05',q:'预测下月整体销售额',model:'GPT-4o',tokens:840,status:'ok'},
+    {time:'4月23日 15:30',q:'活跃用户画像分析与分层',model:'Claude 3.5',tokens:2340,status:'ok'},
+    {time:'4月22日 09:15',q:'广告投放 ROI 归因',model:'GPT-4o',tokens:1780,status:'err'},
+  ];
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <div style={{fontSize:15,fontWeight:700,color:C.t1}}>历史记录</div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:8,padding:'6px 10px',display:'flex',alignItems:'center',gap:7}}>
+            <Ic name="search" size={13} color={C.t3}/>
+            <input placeholder="搜索历史..." style={{background:'transparent',border:'none',outline:'none',color:C.t1,fontSize:12,width:140}}/>
+          </div>
+        </div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {sessions.map((s,i)=>(
+          <Card key={i} style={{padding:'13px 16px',cursor:'pointer'}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=C.bh}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}
+          >
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <div style={{width:8,height:8,borderRadius:'50%',background:s.status==='ok'?C.ok:C.err,flexShrink:0}}/>
+              <span style={{flex:1,fontSize:13,color:C.t2}}>{s.q}</span>
+              <span style={{fontSize:10,color:C.t3,padding:'2px 7px',background:C.s2,borderRadius:5}}>{s.model}</span>
+              <span style={{fontSize:11,color:C.t3}}>{s.tokens} tokens</span>
+              <span style={{fontSize:11,color:C.t3,minWidth:100,textAlign:'right'}}>{s.time}</span>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  USERS PAGE
+// ═══════════════════════════════════════════════════════
+const UsersPage=()=>{
+  const users=[
+    {name:'张三',role:'管理员',dept:'数据团队',status:'active',login:'10分钟前'},
+    {name:'李四',role:'分析师',dept:'营销部',status:'active',login:'1小时前'},
+    {name:'王五',role:'查看者',dept:'运营部',status:'active',login:'今天 09:20'},
+    {name:'赵六',role:'分析师',dept:'产品部',status:'inactive',login:'3天前'},
+    {name:'陈七',role:'查看者',dept:'财务部',status:'active',login:'今天 11:45'},
+    {name:'刘八',role:'管理员',dept:'技术部',status:'active',login:'昨天 18:30'},
+  ];
+  const rc={管理员:C.purple,分析师:C.acc,查看者:C.t3};
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <div style={{fontSize:15,fontWeight:700,color:C.t1}}>权限管理</div>
+        <div style={{display:'flex',gap:8}}>
+          <Btn outline icon="filter">筛选</Btn>
+          <Btn color={C.acc} icon="plus">邀请成员</Btn>
+        </div>
+      </div>
+      <Card style={{padding:0,overflow:'hidden'}}>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead>
+            <tr style={{borderBottom:`1px solid ${C.border}`}}>
+              {['成员','角色','部门','状态','最近登录','操作'].map(h=>(
+                <th key={h} style={{padding:'12px 16px',textAlign:'left',fontSize:10,color:C.t3,fontWeight:600,letterSpacing:'0.05em',textTransform:'uppercase'}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u,i)=>(
+              <tr key={i} style={{borderBottom:`1px solid ${C.border}`,transition:'background 0.1s'}}
+                onMouseEnter={e=>e.currentTarget.style.background=C.s2}
+                onMouseLeave={e=>e.currentTarget.style.background='transparent'}
+              >
+                <td style={{padding:'12px 16px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:9}}>
+                    <div style={{width:30,height:30,borderRadius:'50%',background:`linear-gradient(135deg,${C.acc},${C.purple})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white',flexShrink:0}}>{u.name[0]}</div>
+                    <span style={{fontSize:13,color:C.t1,fontWeight:500}}>{u.name}</span>
+                  </div>
+                </td>
+                <td style={{padding:'12px 16px'}}><Badge color={rc[u.role]}>{u.role}</Badge></td>
+                <td style={{padding:'12px 16px',fontSize:12,color:C.t2}}>{u.dept}</td>
+                <td style={{padding:'12px 16px'}}><Badge color={u.status==='active'?C.ok:C.t3}>{u.status==='active'?'活跃':'停用'}</Badge></td>
+                <td style={{padding:'12px 16px',fontSize:12,color:C.t3}}>{u.login}</td>
+                <td style={{padding:'12px 16px'}}>
+                  <div style={{display:'flex',gap:6}}>
+                    <Btn outline>编辑</Btn>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  EXPORT PAGE
+// ═══════════════════════════════════════════════════════
+const ExportPage=()=>{
+  const[fmt,setFmt]=useState('pdf');
+  const[items,setItems]=useState(['GMV趋势分析','归因分析报告']);
+  const contents=['GMV趋势分析','归因分析报告','趋势预测数据','回归系数明细','渠道对比图表'];
+  const toggle=v=>setItems(xs=>xs.includes(v)?xs.filter(x=>x!==v):[...xs,v]);
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{fontSize:15,fontWeight:700,color:C.t1}}>报告导出</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+        {[{id:'pdf',label:'PDF 报告',desc:'标准格式，适合分享与存档'},{id:'ppt',label:'PPT 演示',desc:'可编辑幻灯片，适合汇报'},{id:'excel',label:'Excel 数据',desc:'原始数据，适合二次分析'}].map(t=>(
+          <Card key={t.id} glow={fmt===t.id} accent={C.acc} style={{padding:16,cursor:'pointer'}} onClick={()=>setFmt(t.id)}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <span style={{fontSize:13,fontWeight:600,color:fmt===t.id?C.accL:C.t1}}>{t.label}</span>
+              {fmt===t.id&&<div style={{width:16,height:16,borderRadius:'50%',background:C.acc,display:'flex',alignItems:'center',justifyContent:'center'}}><Ic name="check" size={8} color="white"/></div>}
+            </div>
+            <div style={{fontSize:11,color:C.t3}}>{t.desc}</div>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <div style={{fontSize:12,color:C.t3,marginBottom:14}}>选择报告内容</div>
+        {contents.map(c=>(
+          <label key={c} onClick={()=>toggle(c)} style={{display:'flex',alignItems:'center',gap:9,marginBottom:10,cursor:'pointer'}}>
+            <div style={{width:15,height:15,borderRadius:4,border:`2px solid ${items.includes(c)?C.acc:C.border}`,background:items.includes(c)?C.acc:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all 0.15s'}}>
+              {items.includes(c)&&<Ic name="check" size={8} color="white"/>}
+            </div>
+            <span style={{fontSize:12,color:items.includes(c)?C.t1:C.t2}}>{c}</span>
+          </label>
+        ))}
+      </Card>
+      <div style={{display:'flex',gap:10}}>
+        <Btn color={C.acc} icon="download">生成并下载报告</Btn>
+        <Btn outline>预览</Btn>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  CONFIG PAGE
+// ═══════════════════════════════════════════════════════
+const ConfigPage=()=>{
+  const[llm,setLlm]=useState('GPT-4o');
+  const[temp,setTemp]=useState(0.7);
+  const[rows,setRows]=useState(1000);
+  const[toggls,setToggls]=useState({syntax:true,auto:true,write:false,cache:true,mask:true});
+  const tog=k=>setToggls(t=>({...t,[k]:!t[k]}));
+  return(
+    <div style={{padding:24,height:'100%',overflowY:'auto',display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{fontSize:15,fontWeight:700,color:C.t1}}>参数配置</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <Card>
+          <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:16}}>AI 模型</div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:C.t3,marginBottom:6}}>默认模型</div>
+            <select value={llm} onChange={e=>setLlm(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:6,color:C.t1,fontSize:12,padding:'8px 12px',width:'100%',outline:'none'}}>
+              {['GPT-4o','Claude 3.5 Sonnet','DeepSeek-V3','Qwen-Max'].map(m=><option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:C.t3,marginBottom:6}}>Temperature: <span style={{color:C.accL}}>{parseFloat(temp).toFixed(1)}</span></div>
+            <input type="range" min="0" max="1" step="0.1" value={temp} onChange={e=>setTemp(e.target.value)} style={{width:'100%',accentColor:C.acc}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:C.t3,marginBottom:6}}>最大返回行数: <span style={{color:C.accL}}>{parseInt(rows).toLocaleString()}</span></div>
+            <input type="range" min="100" max="10000" step="100" value={rows} onChange={e=>setRows(e.target.value)} style={{width:'100%',accentColor:C.acc}}/>
+          </div>
+        </Card>
+        <Card>
+          <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:16}}>系统开关</div>
+          {[
+            {k:'syntax',label:'SQL 语法高亮'},
+            {k:'auto',label:'自动生成图表'},
+            {k:'write',label:'允许写入操作'},
+            {k:'cache',label:'开启查询缓存'},
+            {k:'mask',label:'敏感数据脱敏'},
+          ].map(item=>(
+            <div key={item.k} onClick={()=>tog(item.k)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:`1px solid ${C.border}`,cursor:'pointer'}}>
+              <span style={{fontSize:12,color:C.t2}}>{item.label}</span>
+              <Toggle on={toggls[item.k]}/>
+            </div>
+          ))}
+        </Card>
+      </div>
+      <Card>
+        <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:14}}>系统信息</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+          {[['版本','v2.3.1'],['上线时间','148天'],['今日请求','2,847次'],['平均响应','1.2s']].map(([k,v])=>(
+            <div key={k} style={{background:C.s2,borderRadius:8,padding:'10px 12px'}}>
+              <div style={{fontSize:10,color:C.t3,marginBottom:4}}>{k}</div>
+              <div style={{fontSize:15,fontWeight:700,color:C.accL}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  APP
+// ═══════════════════════════════════════════════════════
+const META={
+  query:       {title:'智能问数',       icon:'brain'},
+  dashboard:   {title:'数据看板',       icon:'grid'},
+  attribution: {title:'归因分析',       icon:'attr'},
+  prediction:  {title:'趋势预测',       icon:'trend'},
+  regression:  {title:'回归分析',       icon:'regline'},
+  regtest:     {title:'回归测试',       icon:'test'},
+  datasource:  {title:'数据源管理',     icon:'db'},
+  export:      {title:'报告导出',       icon:'export'},
+  users:       {title:'权限管理',       icon:'users'},
+  history:     {title:'历史记录',       icon:'history'},
+  config:      {title:'参数配置',       icon:'settings'},
+};
+
+const PAGES={
+  query:QueryPage, dashboard:DashboardPage, attribution:AttributionPage,
+  prediction:PredictionPage, regression:RegressionPage, regtest:RegTestPage,
+  datasource:DataSourcePage, export:ExportPage, users:UsersPage,
+  history:HistoryPage, config:ConfigPage,
+};
+
+const App=()=>{
+  const[page,setPage]=useState('query');
+  const[collapsed,setCollapsed]=useState(false);
+  const meta=META[page];
+  const Page=PAGES[page];
+  return(
+    <div style={{height:'100vh',display:'flex',overflow:'hidden',background:C.bg}}>
+      <Sidebar active={page} onNav={setPage} collapsed={collapsed} onToggle={()=>setCollapsed(c=>!c)}/>
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        <Header title={meta.title} icon={meta.icon}/>
+        <div style={{flex:1,overflow:'hidden'}}><Page key={page}/></div>
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

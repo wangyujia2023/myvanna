@@ -27,7 +27,7 @@ from typing import Callable, Dict, List, Optional
 from ..agents.intent_agent import IntentUnderstandingAgent
 from ..agents.query_plan_agent import QueryPlanAgent
 from ..agents.semantic_parse_agent import SemanticParseAgent
-from ..agents.sql_generator_semantic import SQLGeneratorSemanticAgent
+from ..agents.semantic_sql_generator_agent import SQLGeneratorSemanticAgent
 from ..agents.sql_guard_agent import SQLGuardAgent
 from ..doris_client import DorisClient
 from ..qwen_client import QwenClient
@@ -114,7 +114,7 @@ class SemanticPipeline:
     def _get_lc_pipeline(self):
         """延迟初始化 LangChain 降级 pipeline。"""
         if self._lc_pipeline is None:
-            from .ask_lc_pipeline import AskLCPipeline
+            from .langchain_pipeline import AskLCPipeline
             self._lc_pipeline = AskLCPipeline(self._config)
         return self._lc_pipeline
 
@@ -241,6 +241,9 @@ class SemanticPipeline:
                     "count": len(rag_sql_examples),
                     "top_questions": [item.get("question", "") for item in rag_sql_examples[:3]],
                     "top_canonical_questions": [item.get("canonical_question", "") for item in rag_sql_examples[:3]],
+                    "top_scores": [round(float(item.get("similarity", 0) or 0), 4) for item in rag_sql_examples[:3]],
+                    "top_distances": [round(float(item.get("dist", 0) or 0), 4) for item in rag_sql_examples[:3]],
+                    "quality_scores": [round(float(item.get("quality_score", 0) or 0), 4) for item in rag_sql_examples[:3]],
                     "sources": sorted({item.get("source", "") for item in rag_sql_examples if item.get("source")}),
                     "rag_error": rag_error,
                 })
@@ -366,6 +369,23 @@ class SemanticPipeline:
 
         final_sql = sqls[0] if sqls else ""
         logger.info("[SemanticPipeline] generated_sql:\n%s", final_sql or "-- empty --")
+
+        # ── Guard 失败 → 触发 LangChain 降级（走 vanna_collection 知识库召回）──
+        if not last_guard.get("ok") and self._semantic_fallback_enabled:
+            logger.warning(
+                "[SemanticPipeline] guard_ok=False，触发 LangChain 降级。"
+                "guard_reason=%s  path=%s",
+                last_guard.get("reason", ""),
+                gen_result.get("path", "") if sqls else "",
+            )
+            return self._lc_fallback(
+                question,
+                trace,
+                notify,
+                intent,
+                sp,
+                fallback_reason=f"guard_failed:{last_guard.get('reason', '')}",
+            )
 
         trace.finish(
             sql=final_sql,

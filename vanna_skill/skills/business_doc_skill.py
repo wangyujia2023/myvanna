@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from .base import BaseSkill, SkillContext
-from ..retrieval.doris_retriever import DorisRetriever
+from ..retrieval.doris_knowledge_retriever import DorisRetriever
 
 
 class BusinessDocSkill(BaseSkill):

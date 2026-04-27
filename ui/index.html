@@ -3,37 +3,111 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vanna Skill — 智能问数管理台</title>
+<title>AgentBI — 零售运营分析平台</title>
 <link rel="stylesheet" href="/ui/style.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
 </head>
 <body>
-<header class="header">
-  <a class="logo" href="#" onclick="showPage('query');return false;">
-    <div class="logo-icon">🧠</div>
-    <span>Vanna Skill</span>
-  </a>
-  <span style="color:var(--text3);font-size:12px" id="db-info">retail_dw @ 10.26.20.3</span>
 
-  <nav class="nav">
-    <button class="nav-btn active" onclick="showPage('query')" id="nav-query">🔍 问数验证</button>
-    <button class="nav-btn" onclick="showPage('manage')" id="nav-manage">⚙️ 训练管理</button>
-    <button class="nav-btn" onclick="showPage('log')" id="nav-log">📋 调用日志</button>
-    <button class="nav-btn" onclick="showPage('config')" id="nav-config">🔧 配置</button>
-  </nav>
-  <div class="header-tools">
-    <div class="engine-switch" title="问数引擎">
-      <button class="engine-chip" id="engine-vanna" onclick="setAskEngine('vanna')">Vanna</button>
-      <button class="engine-chip" id="engine-langchain" onclick="setAskEngine('langchain')">LangChain</button>
-      <button class="engine-chip active" id="engine-semantic" onclick="setAskEngine('semantic')" title="语义路径（Semantic Layer）">Semantic</button>
+<div class="layout">
+
+  <!-- ═══ Sidebar ══════════════════════════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">🧠</div>
+      <div class="logo-text">
+        <div class="logo-name">AgentBI 平台</div>
+        <div class="logo-sub">零售运营分析 · 受控问数</div>
+      </div>
     </div>
-    <div class="status-dot" id="status-dot" title="连接状态"></div>
-  </div>
-</header>
 
-<main class="main">
-  <div id="page-container" style="display:flex;flex:1;min-height:0"></div>
-</main>
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <div class="nav-section-title">问数中心</div>
+        <a class="nav-item nav-btn active" id="nav-query" onclick="showPage('query')">
+          <span class="nav-icon">💬</span> 问数工作台
+        </a>
+        <a class="nav-item nav-btn" id="nav-rca" onclick="showPage('rca')">
+          <span class="nav-icon">🔍</span> 归因分析
+        </a>
+        <a class="nav-item nav-btn" id="nav-regression" onclick="showPage('regression')">
+          <span class="nav-icon">🧪</span> 回归测试
+        </a>
+        <a class="nav-item nav-btn nav-disabled">
+          <span class="nav-icon">📊</span> 报告中心
+          <span class="nav-tag">Soon</span>
+        </a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">指标治理</div>
+        <a class="nav-item nav-btn" id="nav-manage" onclick="showPage('manage')">
+          <span class="nav-icon">📋</span> 指标详情
+        </a>
+        <a class="nav-item nav-btn" id="nav-cube" onclick="showTab('cube')">
+          <span class="nav-icon">◎</span> Metric Cube
+        </a>
+        <a class="nav-item nav-btn" id="nav-semantic" onclick="showTab('semantic')">
+          <span class="nav-icon">🧬</span> 语义层管理
+        </a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">运维审计</div>
+        <a class="nav-item nav-btn" id="nav-log" onclick="showPage('log')">
+          <span class="nav-icon">📋</span> 查询审计
+        </a>
+        <a class="nav-item nav-btn" id="nav-config" onclick="showPage('config')">
+          <span class="nav-icon">🔧</span> Agent 调试台
+        </a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">系统</div>
+        <a class="nav-item nav-btn" id="nav-arch" onclick="showPage('arch')">
+          <span class="nav-icon">🗺</span> 系统架构图
+        </a>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-avatar">运</div>
+      <div class="user-info">
+        <div class="user-name">运营分析师</div>
+        <div class="user-role" id="db-info">retail_dw @ 10.26.20.3</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══ Main ══════════════════════════════════════════════════════════════ -->
+  <div class="sidebar-main">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <span class="topbar-title" id="topbar-title">问数工作台</span>
+      </div>
+      <div class="topbar-right">
+        <div class="engine-switch" title="问数引擎">
+          <button class="engine-chip active" id="engine-cube" onclick="setAskEngine('cube')">Cube</button>
+          <button class="engine-chip" id="engine-langchain" onclick="setAskEngine('langchain')">LangChain</button>
+          <button class="engine-chip" id="engine-vanna" onclick="setAskEngine('vanna')">Vanna</button>
+        </div>
+        <div class="topbar-divider"></div>
+        <div class="topbar-badge badge-green">
+          <div class="status-dot ok" id="status-dot"></div>
+          <span>Doris 已连接</span>
+        </div>
+        <div class="topbar-badge badge-blue" id="cube-badge">零售运营分析 Cube</div>
+        <div class="topbar-badge badge-dim" id="cutoff-badge">数据截止 <span id="data-cutoff">—</span></div>
+      </div>
+    </div>
+
+    <!-- Page container -->
+    <div id="page-container" class="pages-wrap"></div>
+
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>

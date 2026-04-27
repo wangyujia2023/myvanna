@@ -13,7 +13,7 @@ from ..agents.sql_generator_agent import SQLGeneratorAgent
 from ..agents.sql_guard_agent import SQLGuardAgent
 from ..doris_client import DorisClient
 from ..qwen_client import QwenClient
-from ..retrieval.doris_retriever import DorisRetriever
+from ..retrieval.doris_knowledge_retriever import DorisRetriever
 from ..skills.audit_pattern_skill import AuditPatternSkill
 from ..skills.base import SkillContext
 from ..skills.business_doc_skill import BusinessDocSkill

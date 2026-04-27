@@ -1,0 +1,39 @@
+<div class="page active" id="page-regression">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🧪 回归测试</span>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">批量问题</label>
+          <textarea
+            class="form-input form-textarea"
+            id="regression-questions"
+            style="min-height:180px;font-family:var(--mono)"
+            placeholder="每行一个问题，例如：&#10;4月份各城市销售额是多少？&#10;昨日各城市销售额环比增长多少？&#10;PLUS会员和普通会员消费对比？"></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="btn-run-regression" onclick="runRegressionBatch()">▶ 开始回归</button>
+          <button class="btn btn-secondary" onclick="fillRegressionSamples()">✨ 填充示例</button>
+          <button class="btn btn-secondary" onclick="copyRegressionReport()" id="btn-copy-regression-all" disabled>📋 复制全部报告</button>
+          <span class="form-hint" id="regression-status"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px;flex:1;min-height:0">
+      <div class="card-header">
+        <span class="card-title">📚 执行结果</span>
+        <span class="form-hint" id="regression-summary">尚未执行</span>
+      </div>
+      <div class="card-body" id="regression-results" style="overflow:auto">
+        <div class="empty-state">
+          <div class="empty-icon">🧪</div>
+          <div class="empty-text">粘贴多条问题后开始回归</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -5,7 +5,7 @@ const API = ''; // 同源，留空即可；若跨域填 http://localhost:8765
 let currentQuestion = '';
 let currentSQL = '';
 let currentSSE = null;
-let currentAskEngine = 'semantic';
+let currentAskEngine = 'cube';
 let currentPage = 'query';
 let currentManageTab = 'sql';
 let promptVersions = [];
@@ -74,9 +74,28 @@ function renderSuggestedQuestions(){
   if(currentQuestion) qEl.value = currentQuestion;
 }
 
+// 页面名称 → 顶栏标题
+const PAGE_TITLES = {
+  query:    '问数工作台',
+  manage:   '指标详情',
+  semantic: '语义层管理',
+  cube:     'Metric Cube',
+  regression: '回归测试',
+  log:      '查询审计',
+  config:   'Agent 调试台',
+  arch:     '系统架构图',
+  rca:      '归因分析',
+};
+
 function activateNav(name){
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('nav-'+name)?.classList.add('active');
+  // 清除所有 sidebar nav-item 的 active
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  // 激活对应项（nav-semantic 对应 manage 页 semantic tab，共用 nav-semantic id）
+  const navId = name === 'semantic' ? 'nav-semantic' : 'nav-' + name;
+  document.getElementById(navId)?.classList.add('active');
+  // 更新顶栏标题
+  const titleEl = document.getElementById('topbar-title');
+  if(titleEl) titleEl.textContent = PAGE_TITLES[name] || name;
 }
 
 async function afterPageLoad(name){
@@ -93,10 +112,31 @@ async function afterPageLoad(name){
   if(name === 'config'){
     loadConfig();
   }
+  if(name === 'regression'){
+    initRegressionPage();
+  }
 }
 
 /* ── 导航 ──────────────────────────────────────────────────────────────── */
 async function showPage(name){
+  // 「语义层管理」是 manage 页下的 semantic tab，特殊路由
+  if(name === 'semantic'){
+    activateNav('semantic');
+    currentManageTab = 'semantic';
+    if(currentPage !== 'manage'){
+      currentPage = 'manage';
+      const container = ensurePageContainer();
+      container.innerHTML = `<div class="page active"><div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">页面加载中…</div></div></div>`;
+      try{
+        const html = await loadHtmlFragment('/ui/pages/manage.html', pageCache);
+        container.innerHTML = html;
+        container.querySelector('.page')?.classList.add('active');
+      }catch(e){ console.error(e); }
+    }
+    await showTab('semantic');
+    return;
+  }
+
   currentPage = name;
   if(currentSSE && name !== 'query'){
     currentSSE.close();
@@ -122,6 +162,8 @@ async function showTab(name){
     await showPage('manage');
     return;
   }
+  if(name === 'cube') activateNav('cube');
+  if(name === 'semantic') activateNav('semantic');
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('tab-'+name)?.classList.add('active');
   const container = document.getElementById('manage-tab-container');
@@ -137,6 +179,7 @@ async function showTab(name){
   if(name==='prompt') loadPromptLab();
   if(name==='regression') initRegressionPage();
   if(name==='semantic') loadSemanticList();
+  if(name==='cube') loadCubeAdmin();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -200,6 +243,154 @@ async function deleteSemanticNode(type, name){
     toast(`已删除 ${name}`);
     loadSemanticList();
   } catch(e){ toast(e.message, 'error'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ◎ Metric Cube 管理
+═══════════════════════════════════════════════════════════════════════════ */
+const CUBE_ENTITY_LABELS = {
+  models: '模型',
+  measures: '指标',
+  dimensions: '维度',
+  'dimension-values': '枚举值',
+  joins: '关联关系',
+  segments: '业务分段',
+  templates: 'SQL 模板',
+  versions: '模型版本',
+};
+let cubeEntities = [];
+let currentCubeEntity = 'models';
+let currentCubeMeta = null;
+let currentCubeRows = [];
+let currentCubeRow = null;
+
+async function loadCubeAdmin(){
+  const listEl = document.getElementById('cube-entity-list');
+  if(!listEl) return;
+  try{
+    const res = await apiFetch('/cube/admin/entities');
+    cubeEntities = res.entities || [];
+    document.getElementById('cube-entity-count').textContent = `${cubeEntities.length} 张表`;
+    listEl.innerHTML = cubeEntities.map(e => `
+      <button class="cube-entity-btn ${e.name===currentCubeEntity?'active':''}" onclick="selectCubeEntity('${e.name}')">
+        <span>${esc(CUBE_ENTITY_LABELS[e.name] || e.name)}</span>
+        <code>${esc(e.table)}</code>
+      </button>
+    `).join('');
+    if(!cubeEntities.some(e=>e.name===currentCubeEntity)) currentCubeEntity = cubeEntities[0]?.name || 'models';
+    await loadCubeRows();
+  }catch(e){
+    listEl.innerHTML = `<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;
+  }
+}
+
+async function selectCubeEntity(entity){
+  currentCubeEntity = entity;
+  currentCubeRow = null;
+  document.querySelectorAll('.cube-entity-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.cube-entity-btn[onclick="selectCubeEntity('${entity}')"]`)?.classList.add('active');
+  await loadCubeRows();
+}
+
+async function loadCubeRows(){
+  const tbody = document.getElementById('cube-tbody');
+  const thead = document.getElementById('cube-thead');
+  if(!tbody || !thead) return;
+  tbody.innerHTML = '<tr><td style="color:var(--text3)">加载中…</td></tr>';
+  try{
+    const res = await apiFetch(`/cube/admin/${currentCubeEntity}?limit=500`);
+    currentCubeMeta = res;
+    currentCubeRows = res.rows || [];
+    const fields = res.fields || [];
+    document.getElementById('cube-table-title').textContent = CUBE_ENTITY_LABELS[currentCubeEntity] || currentCubeEntity;
+    document.getElementById('cube-table-meta').textContent = `${res.table} · ${currentCubeRows.length} 行`;
+    thead.innerHTML = `<tr>${fields.slice(0, 6).map(f=>`<th>${esc(f)}</th>`).join('')}<th>操作</th></tr>`;
+    tbody.innerHTML = currentCubeRows.map((row, idx) => `
+      <tr onclick="editCubeRow(${idx})">
+        ${fields.slice(0, 6).map(f=>`<td title="${esc(String(row[f]??''))}">${esc(String(row[f]??''))}</td>`).join('')}
+        <td><button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();editCubeRow(${idx})">编辑</button></td>
+      </tr>
+    `).join('') || `<tr><td colspan="${fields.length+1}" style="color:var(--text3);text-align:center">暂无数据</td></tr>`;
+    if(currentCubeRows.length) editCubeRow(0);
+    else newCubeRow();
+  }catch(e){
+    tbody.innerHTML = `<tr><td style="color:var(--red)">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function editCubeRow(index){
+  currentCubeRow = currentCubeRows[index] || null;
+  const editor = document.getElementById('cube-row-json');
+  if(editor) editor.value = JSON.stringify(currentCubeRow || {}, null, 2);
+  const state = document.getElementById('cube-editor-state');
+  if(state && currentCubeMeta && currentCubeRow){
+    state.textContent = `${currentCubeMeta.pk}=${currentCubeRow[currentCubeMeta.pk]}`;
+  }
+}
+
+function newCubeRow(){
+  const row = {};
+  (currentCubeMeta?.fields || []).forEach(f => {
+    if(['visible','version','public_flag'].includes(f)) row[f] = 1;
+    else if(f.endsWith('_json')) row[f] = ['aliases_json','drill_members_json','hierarchy_json'].includes(f) ? '[]' : '{}';
+    else row[f] = '';
+  });
+  currentCubeRow = row;
+  document.getElementById('cube-row-json').value = JSON.stringify(row, null, 2);
+  document.getElementById('cube-editor-state').textContent = '新增';
+}
+
+function formatCubeJson(){
+  const editor = document.getElementById('cube-row-json');
+  try{ editor.value = JSON.stringify(JSON.parse(editor.value || '{}'), null, 2); }
+  catch(e){ toast('JSON 格式错误: '+e.message, 'error'); }
+}
+
+async function saveCubeRow(){
+  const editor = document.getElementById('cube-row-json');
+  try{
+    const row = JSON.parse(editor.value || '{}');
+    const res = await apiFetch(`/cube/admin/${currentCubeEntity}`, {
+      method:'POST',
+      body:JSON.stringify({row})
+    });
+    toast('Cube 配置已保存');
+    document.getElementById('cube-admin-msg').textContent = `已保存 ${res.entity}：${res.pk}=${res.id}`;
+    await loadCubeRows();
+  }catch(e){ toast('保存失败: '+e.message, 'error'); }
+}
+
+async function deleteCubeRow(){
+  if(!currentCubeMeta || !currentCubeRow) return;
+  const id = currentCubeRow[currentCubeMeta.pk];
+  if(!id && id !== 0){ toast('没有可删除的主键', 'error'); return; }
+  if(!confirm(`确认删除 ${currentCubeEntity}: ${id}？`)) return;
+  try{
+    await apiFetch(`/cube/admin/${currentCubeEntity}/${encodeURIComponent(id)}`, {method:'DELETE'});
+    toast('已删除');
+    await loadCubeRows();
+  }catch(e){ toast('删除失败: '+e.message, 'error'); }
+}
+
+async function syncCubeCache(){
+  try{
+    const res = await apiFetch(`/cube/admin/${currentCubeEntity || 'models'}/sync-cache`, {method:'POST'});
+    toast('Cube 内存缓存已同步');
+    const msg = document.getElementById('cube-admin-msg');
+    if(msg) msg.textContent = `已同步模型版本 ${res.version_no || res.rendered_version || ''}`;
+  }catch(e){ toast('同步失败: '+e.message, 'error'); }
+}
+
+async function collectCubeEnums(){
+  try{
+    const res = await apiFetch('/cube/admin/dimension-values/collect', {
+      method:'POST',
+      body:JSON.stringify({max_values:200, max_cardinality:500})
+    });
+    toast(`枚举采集完成：${res.inserted || 0} 条`);
+    currentCubeEntity = 'dimension-values';
+    await loadCubeAdmin();
+  }catch(e){ toast('枚举采集失败: '+e.message, 'error'); }
 }
 
 async function upsertMetric(){
@@ -383,9 +574,10 @@ async function reloadYamlFile(){
 
 function setAskEngine(engine){
   currentAskEngine = engine;
+  document.getElementById('engine-cube').classList.toggle('active', engine==='cube');
   document.getElementById('engine-vanna').classList.toggle('active', engine==='vanna');
   document.getElementById('engine-langchain').classList.toggle('active', engine==='langchain');
-  document.getElementById('engine-semantic').classList.toggle('active', engine==='semantic');
+  document.getElementById('engine-semantic')?.classList.toggle('active', engine==='semantic');
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -410,6 +602,11 @@ function doAsk(){
 
   // Close previous SSE
   if(currentSSE){ currentSSE.close(); currentSSE=null; }
+
+  if(currentAskEngine === 'cube'){
+    runCubeAsk(q);
+    return;
+  }
 
   let streamPath;
   if(currentAskEngine === 'langchain') streamPath = '/ask-lc/stream';
@@ -455,42 +652,179 @@ function doAsk(){
   });
 }
 
-function resetChain(){
-  document.getElementById('chain-body').innerHTML =
-    '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">⏳ 推理中…</div>';
+// Cube pipeline 固定步骤顺序（用于预渲染 pending 卡片）
+const CUBE_PIPELINE_STEPS = [
+  { name: 'cube_model_check', label: '① Cube 模型检查' },
+  { name: 'intent',           label: '② 意图理解' },
+  { name: 'semantic_sql_rag', label: '③ SQL RAG 召回' },
+  { name: 'cube_prompt',      label: '④ Prompt 构建' },
+  { name: 'cube_llm_parse',   label: '⑤ LLM 语义解析' },
+  { name: 'cube_heuristics',  label: '⑥ 规则修正' },
+  { name: 'cube_compile',     label: '⑦ SQL 编译' },
+];
+
+function setChainProgress(n, total){
+  const bar = document.getElementById('chain-progress-bar');
+  if(bar) bar.style.width = (n / total * 100) + '%';
 }
 
-const STEP_LABELS = {
-  generate_embedding: '① 生成 Embedding 向量',
-  vector_search_sql:  '② 向量检索相似 SQL',
-  vector_search_ddl:  '③ 向量检索相关 DDL',
-  build_prompt:       '④ 组装 Prompt',
-  llm_generate:       '⑤ LLM 推理生成 SQL',
-  extract_sql:        '⑥ 提取 SQL',
-  router_intent:      '① 意图解析与标准化',
-  semantic_sql_rag:   '② 正确 SQL RAG 召回',
-  multi_recall:       '② 多路召回与融合',
-  sql_guard:          '⑤ SQL Guard / EXPLAIN',
-};
+let _cubeStepsDone = 0;
 
-function addStepCard(name, label, status){
-  const container = document.getElementById('chain-body');
-  if(container.querySelector('.empty-state')||container.childElementCount===1&&container.firstChild.tagName==='DIV'&&!container.firstChild.className.includes('step-card')){
-    container.innerHTML='';
+function runCubeAsk(question){
+  _cubeStepsDone = 0;
+
+  // 立即渲染全部步骤为 pending，让用户看到完整流水线
+  const body = document.getElementById('chain-body');
+  body.innerHTML = '';
+  CUBE_PIPELINE_STEPS.forEach((s, idx) => {
+    if(idx > 0) body.appendChild(makeConnector('pending'));
+    body.appendChild(makeStepCardEl(s.name, s.label, 'pending'));
+  });
+  setChainProgress(0, CUBE_PIPELINE_STEPS.length);
+
+  const url = API + '/ask/cube/stream?q=' + encodeURIComponent(question);
+  const sse = new EventSource(url);
+  currentSSE = sse;
+
+  sse.addEventListener('start', e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('trace-id-display').textContent = 'ID: ' + d.trace_id;
+  });
+
+  sse.addEventListener('step_start', e => {
+    const d = JSON.parse(e.data);
+    // 找到对应的 pending 卡片，切换为 running
+    updateStepCard({ name: d.name, status: 'running' });
+    // 更新前一个 connector 为 active
+    const idx = CUBE_PIPELINE_STEPS.findIndex(s => s.name === d.name);
+    if(idx > 0) updateConnector(idx - 1, 'active');
+  });
+
+  sse.addEventListener('step_done', e => {
+    const d = JSON.parse(e.data);
+    updateStepCard(d);
+    _cubeStepsDone++;
+    setChainProgress(_cubeStepsDone, CUBE_PIPELINE_STEPS.length);
+    // 更新对应 connector 为 done
+    const idx = CUBE_PIPELINE_STEPS.findIndex(s => s.name === d.name);
+    if(idx > 0) updateConnector(idx - 1, 'done');
+  });
+
+  sse.addEventListener('final', e => {
+    const d = JSON.parse(e.data);
+    const trace = d.trace || {};
+    document.getElementById('trace-time-display').textContent =
+      `⏱ ${trace.total_ms?.toFixed(0) || 0}ms`;
+    setChainProgress(CUBE_PIPELINE_STEPS.length, CUBE_PIPELINE_STEPS.length);
+    if(d.sql){
+      currentSQL = d.sql;
+      showSQL(d.sql);
+    } else if(d.error){
+      showError(d.error);
+    }
+    sse.close();
+    currentSSE = null;
+  });
+
+  sse.addEventListener('error', e => {
+    console.warn('Cube SSE error', e);
+    showError('连接中断，请重试');
+    sse.close();
+    currentSSE = null;
+  });
+}
+
+function makeConnector(state){
+  const div = document.createElement('div');
+  div.className = 'step-connector' + (state !== 'pending' ? ' ' + state : '');
+  div.setAttribute('data-connector', '');
+  div.innerHTML = '<div class="step-connector-dot"></div>';
+  return div;
+}
+
+// 更新第 idx 个 connector（0-based）
+function updateConnector(idx, state){
+  const connectors = document.querySelectorAll('#chain-body [data-connector]');
+  const c = connectors[idx];
+  if(c){
+    c.className = 'step-connector ' + state;
   }
-  const displayLabel = STEP_LABELS[name] || label;
+}
+
+function makeStepCardEl(name, label, status){
   const card = document.createElement('div');
-  card.className = `step-card ${status}`;
-  card.id = `step-${name}`;
+  card.className = 'step-card ' + status;
+  card.id = 'step-' + name;
+  const icon = status === 'pending' ? '·' : status === 'running' ? '↻' : '…';
   card.innerHTML = `
     <div class="step-header" onclick="toggleStepDetail('${name}')">
-      <div class="step-icon ${status}">${status==='running'?'↻':'…'}</div>
-      <span class="step-name">${esc(displayLabel)}</span>
+      <div class="step-icon ${status}">${icon}</div>
+      <span class="step-name">${esc(label)}</span>
       <span class="step-dur" id="dur-${name}"></span>
     </div>
     <div class="step-detail" id="detail-${name}"></div>
   `;
-  container.appendChild(card);
+  return card;
+}
+
+function renderSyncTraceResult(result){
+  const trace = result.trace || {};
+  document.getElementById('trace-id-display').textContent = trace.trace_id ? ('ID: ' + trace.trace_id) : '';
+  document.getElementById('trace-time-display').textContent = `⏱ ${trace.total_ms?.toFixed(0)||0}ms`;
+  const steps = trace.steps || [];
+  if(!steps.length){
+    resetChain();
+    return;
+  }
+  const body = document.getElementById('chain-body');
+  body.innerHTML = '';
+  steps.forEach(step => updateStepCard(step));
+}
+
+function resetChain(){
+  document.getElementById('chain-body').innerHTML =
+    '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">⏳ 推理中…</div>';
+  setChainProgress(0, 1);
+}
+
+const STEP_LABELS = {
+  generate_embedding:  '① 生成 Embedding 向量',
+  vector_search_sql:   '② 向量检索相似 SQL',
+  vector_search_ddl:   '③ 向量检索相关 DDL',
+  build_prompt:        '④ 组装 Prompt',
+  llm_generate:        '⑤ LLM 推理生成 SQL',
+  extract_sql:         '⑥ 提取 SQL',
+  router_intent:       '① 意图解析与标准化',
+  // Cube pipeline (7 steps)
+  cube_model_check:    '① Cube 模型检查',
+  intent:              '② 意图理解',
+  semantic_sql_rag:    '③ SQL RAG 召回',
+  cube_prompt:         '④ Prompt 构建',
+  cube_llm_parse:      '⑤ LLM 语义解析',
+  cube_heuristics:     '⑥ 规则修正',
+  cube_compile:        '⑦ SQL 编译',
+  // Other pipelines
+  cube_parse:          '③ Cube 语义解析',
+  semantic_parse:      '③ 语义解析',
+  multi_recall:        '② 多路召回与融合',
+  sql_guard:           '⑤ SQL Guard / EXPLAIN',
+};
+
+function addStepCard(name, label, status){
+  const container = document.getElementById('chain-body');
+  // 清空 loading 占位
+  if(container.querySelector('.empty-state') ||
+     (container.childElementCount===1 && container.firstChild.tagName==='DIV' && !container.firstChild.id.startsWith('step-'))){
+    container.innerHTML='';
+  }
+  // 如果已经有这个卡片（pending 预渲染），不重复添加
+  if(document.getElementById('step-'+name)) return;
+  const displayLabel = STEP_LABELS[name] || label;
+  // 加连接线（非第一张卡）
+  if(container.querySelectorAll('.step-card').length > 0){
+    container.appendChild(makeConnector('pending'));
+  }
+  container.appendChild(makeStepCardEl(name, displayLabel, status));
   container.scrollTop = container.scrollHeight;
 }
 
@@ -502,21 +836,26 @@ function updateStepCard(step){
   card.className = `step-card ${step.status}`;
   const iconEl = card.querySelector('.step-icon');
   iconEl.className = `step-icon ${step.status}`;
-  const icons = {ok:'✓', error:'✗', cached:'○', running:'↻'};
-  iconEl.textContent = icons[step.status]||'?';
+  const icons = {ok:'✓', error:'✗', cached:'○', running:'↻', pending:'·'};
+  iconEl.textContent = icons[step.status] || '?';
 
   const durEl = document.getElementById('dur-'+name);
-  if(durEl && step.duration_ms!=null) durEl.textContent = step.duration_ms.toFixed(0)+'ms';
+  if(durEl && step.duration_ms != null) durEl.textContent = step.duration_ms.toFixed(0) + 'ms';
 
   // Badge (note)
   const header = card.querySelector('.step-header');
   const existBadge = header.querySelector('.step-badge');
   if(existBadge) existBadge.remove();
-  if(step.note){
+  if(step.note && step.note !== 'DISABLED'){
     const badge = document.createElement('span');
     const cls = step.note==='CACHED'?'cached':step.note.includes('gemini')?'model':'fresh';
     badge.className = `step-badge ${cls}`;
     badge.textContent = step.note;
+    header.insertBefore(badge, durEl);
+  } else if(step.note === 'DISABLED'){
+    const badge = document.createElement('span');
+    badge.className = 'step-badge cached';
+    badge.textContent = '已跳过';
     header.insertBefore(badge, durEl);
   }
 
@@ -540,6 +879,101 @@ function updateStepCard(step){
         <div class="detail-row"><span class="detail-label">标准化</span><span class="detail-val">${esc(out.normalized_query||'')}</span></div>
         <div class="detail-row"><span class="detail-label">意图</span><span class="detail-val highlight">${esc(out.intent||'')}</span></div>
         <div class="detail-row"><span class="detail-label">实体</span><span class="detail-val">${esc(out.entity||'')}</span></div>`,
+      intent: ()=>`
+        <div class="detail-row"><span class="detail-label">意图</span><span class="detail-val highlight">${esc(out.intent_type||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">业务域</span><span class="detail-val">${esc(out.business_domain||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">复杂度</span><span class="detail-val">${esc(out.complexity||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">时间提示</span><span class="detail-val">${esc(out.time_hint||'')}</span></div>`,
+      semantic_parse: ()=>`
+        <div class="detail-row"><span class="detail-label">指标</span><span class="detail-val">${esc((out.metrics||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">维度</span><span class="detail-val">${esc((out.dimensions||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">Coverage</span><span class="detail-val highlight">${out.coverage_score ?? 0}</span></div>
+        <div class="detail-row"><span class="detail-label">分析类型</span><span class="detail-val">${esc(out.analysis_type||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">未解析</span><span class="detail-val">${esc((out.unresolved||[]).join(', ')||'—')}</span></div>`,
+      semantic_sql_rag: ()=>{
+        const rows = (out.top_questions||[]).map((q,i)=>
+          '<div class="detail-row"><span class="detail-label">Q'+(i+1)+'</span><span class="detail-val">'+esc(q)
+          +' <span class="rag-score">score '+esc(String(out.top_scores?.[i] ?? '—'))
+          +' · dist '+esc(String(out.top_distances?.[i] ?? '—'))
+          +' · quality '+esc(String(out.quality_scores?.[i] ?? '—'))+'</span></span></div>'
+          +((out.top_sqls||[])[i]?'<div class="detail-block">'+esc((out.top_sqls||[])[i])+'</div>':'')
+        ).join('');
+        const statusSpan = out.enabled===false
+          ? '<span style="color:var(--text3)">已禁用</span>'
+          : '<span class="highlight">已启用</span>';
+        return '<div class="detail-row"><span class="detail-label">状态</span><span class="detail-val">'+statusSpan+'</span></div>'
+          +'<div class="detail-row"><span class="detail-label">召回数</span><span class="detail-val highlight">'+(out.count||0)+' 条</span></div>'
+          +(rows?'<div class="detail-subtitle">Top 召回样本</div>'+rows:'');
+      },
+      cube_model_check: ()=>`
+        <div class="detail-row"><span class="detail-label">模型版本</span><span class="detail-val highlight">${esc(String(out.model_version||0))}</span></div>
+        ${out.model_checksum?`<div class="detail-row"><span class="detail-label">Checksum</span><span class="detail-val" style="font-family:var(--mono);font-size:11px">${esc(out.model_checksum)}</span></div>`:''}
+        <div class="detail-row"><span class="detail-label">指标数</span><span class="detail-val highlight">${out.measures} 个</span></div>
+        <div class="detail-row"><span class="detail-label">维度数</span><span class="detail-val">${out.dimensions} 个</span></div>
+        <div class="detail-row"><span class="detail-label">分段数</span><span class="detail-val">${out.segments} 个</span></div>
+        <div class="detail-row"><span class="detail-label">关联关系</span><span class="detail-val">${out.joins} 个</span></div>`,
+      cube_prompt: ()=>`
+        <div class="detail-row"><span class="detail-label">Prompt 长度</span><span class="detail-val highlight">${fmt(out.prompt_chars)} 字符</span></div>
+        <div class="detail-row"><span class="detail-label">指标数（传入）</span><span class="detail-val">${out.measures_in_prompt} 个</span></div>
+        <div class="detail-row"><span class="detail-label">维度数（传入）</span><span class="detail-val">${out.dimensions_in_prompt} 个</span></div>
+        <div class="detail-row"><span class="detail-label">RAG 示例</span><span class="detail-val">${out.rag_examples} 条</span></div>
+        <div class="detail-row"><span class="detail-label">时间提示</span><span class="detail-val highlight">${esc(out.time_hint||'—')}</span></div>`,
+      cube_llm_parse: ()=>`
+        <div class="detail-row"><span class="detail-label">LLM 响应</span><span class="detail-val highlight">${fmt(out.response_chars)} 字符</span></div>
+        <div class="detail-row"><span class="detail-label">原始指标</span><span class="detail-val">${esc((out.raw_measures||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">原始维度</span><span class="detail-val">${esc((out.raw_dimensions||[]).join(', ')||'—')}</span></div>
+        ${(out.raw_segments||[]).length?`<div class="detail-row"><span class="detail-label">原始分段</span><span class="detail-val">${esc(out.raw_segments.join(', '))}</span></div>`:''}
+        ${out.raw_limit!=null?`<div class="detail-row"><span class="detail-label">Limit</span><span class="detail-val">${out.raw_limit}</span></div>`:''}
+        ${(out.raw_filters||[]).length?`
+          <div class="detail-subtitle">原始过滤（${out.raw_filters.length} 个）</div>
+          ${(out.raw_filters||[]).map(f=>`<div class="detail-row"><span class="detail-label">${esc(f.member||'')}</span><span class="detail-val">${esc(f.operator||'')} <strong>${esc(Array.isArray(f.values)?f.values.join(', '):String(f.values??''))}</strong></span></div>`).join('')}
+        `:''}`,
+      cube_heuristics: ()=>`
+        <div class="detail-row"><span class="detail-label">解析后指标</span><span class="detail-val highlight">${esc((out.measures||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">解析后维度</span><span class="detail-val">${esc((out.dimensions||[]).join(', ')||'—')}</span></div>
+        ${(out.segments||[]).length?`<div class="detail-row"><span class="detail-label">分段</span><span class="detail-val">${esc(out.segments.join(', '))}</span></div>`:''}
+        <div class="detail-row"><span class="detail-label">分析类型</span><span class="detail-val highlight">${esc(out.analysis_type||'—')}</span></div>
+        ${(out.time_scope&&out.time_scope.start)?`
+          <div class="detail-row"><span class="detail-label">时间范围</span>
+            <span class="detail-val highlight">${esc(out.time_scope.start)} ~ ${esc(out.time_scope.end||'')}
+              ${out.time_scope.label?'（'+esc(out.time_scope.label)+'）':''}
+            </span>
+          </div>`:''}
+        ${out.limit!=null?`<div class="detail-row"><span class="detail-label">Limit</span><span class="detail-val">${out.limit}</span></div>`:''}
+        ${(out.filters||[]).length?`
+          <div class="detail-subtitle">过滤条件（${out.filters.length} 个）</div>
+          ${(out.filters||[]).map(f=>`<div class="detail-row"><span class="detail-label">${esc(f.member||'')}</span><span class="detail-val">${esc(f.op||'')} <strong>${esc(Array.isArray(f.values)?f.values.join(', '):String(f.values??''))}</strong></span></div>`).join('')}
+        `:''}
+        ${(out.unresolved||[]).length?`<div class="detail-row"><span class="detail-label" style="color:var(--yellow)">未解析</span><span class="detail-val" style="color:var(--yellow)">${esc(out.unresolved.join(', '))}</span></div>`:''}`,
+      cube_parse: ()=>`
+        <div class="detail-row"><span class="detail-label">指标</span><span class="detail-val highlight">${esc((out.measures||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">维度</span><span class="detail-val">${esc((out.dimensions||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">分段</span><span class="detail-val">${esc((out.segments||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">分析类型</span><span class="detail-val highlight">${esc(out.analysis_type||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">Limit</span><span class="detail-val">${out.limit??'—'}</span></div>
+        ${(out.time_scope&&out.time_scope.start)?`
+          <div class="detail-row"><span class="detail-label">时间范围</span>
+            <span class="detail-val highlight">${esc(out.time_scope.start)} ~ ${esc(out.time_scope.end)}
+              ${out.time_scope.label?'（'+esc(out.time_scope.label)+'）':''}
+            </span>
+          </div>`:''
+        }
+        ${(out.comparison&&out.comparison.enabled)?`
+          <div class="detail-row"><span class="detail-label">对比模式</span>
+            <span class="detail-val highlight">${esc(out.comparison.mode||'')}：${esc(out.comparison.compare_start||'')} ~ ${esc(out.comparison.compare_end||'')}</span>
+          </div>`:''}
+        ${(out.filters||[]).length?`
+          <div class="detail-subtitle">过滤条件（${out.filters.length} 个）</div>
+          ${(out.filters||[]).map(f=>`
+            <div class="detail-row">
+              <span class="detail-label">${esc(f.member)}</span>
+              <span class="detail-val">${esc(f.operator)} <strong>${esc(Array.isArray(f.values)?f.values.join(', '):String(f.values))}</strong></span>
+            </div>`).join('')}
+        `:'<div class="detail-row"><span class="detail-label">过滤条件</span><span class="detail-val" style="color:var(--text3)">无</span></div>'}
+        ${(out.unresolved||[]).length?`
+          <div class="detail-row"><span class="detail-label" style="color:var(--yellow)">未解析</span>
+            <span class="detail-val" style="color:var(--yellow)">${esc(out.unresolved.join(', '))}</span>
+          </div>`:''}`,
       multi_recall: ()=>`
         <div class="detail-row"><span class="detail-label">SQL示例</span><span class="detail-val">${out.sql_example_count||0} 条</span></div>
         <div class="detail-row"><span class="detail-label">DDL</span><span class="detail-val">${out.ddl_count||0} 张</span></div>
@@ -591,6 +1025,14 @@ function updateStepCard(step){
       sql_guard: ()=>`
         <div class="detail-row"><span class="detail-label">校验</span><span class="detail-val highlight">${out.ok?'通过':'失败'}</span></div>
         <div class="detail-row"><span class="detail-label">结果</span><span class="detail-val">${esc(out.reason||'')}</span></div>`,
+      cube_compile: ()=>`
+        <div class="detail-row"><span class="detail-label">路径</span><span class="detail-val highlight">${esc(out.path||'cube')}</span></div>
+        <div class="detail-row"><span class="detail-label">模型版本</span><span class="detail-val">${esc(String(out.model_version||0))}</span></div>
+        ${out.model_checksum?`<div class="detail-row"><span class="detail-label">Checksum</span><span class="detail-val" style="font-family:var(--mono);font-size:11px">${esc(out.model_checksum)}</span></div>`:''}
+        <div class="detail-subtitle">Cube Query（LLM 解析结果）</div>
+        <div class="detail-block">${esc(JSON.stringify(out.cube_query||{}, null, 2))}</div>
+        <div class="detail-subtitle">生成 SQL（完整）</div>
+        <div class="detail-block" style="white-space:pre">${esc(out.sql_full||out.sql_preview||'')}</div>`,
       extract_sql: ()=>`
         <div class="detail-row"><span class="detail-label">提取</span><span class="detail-val highlight">${out.sql?'成功':'失败'}</span></div>`,
     };
@@ -598,8 +1040,10 @@ function updateStepCard(step){
     if(step.error) html += `<div class="detail-row"><span class="detail-label" style="color:var(--red)">错误</span><span class="detail-val" style="color:var(--red)">${esc(step.error)}</span></div>`;
     detail.innerHTML = html;
 
-    // auto-expand errors
-    if(step.status==='error') detail.classList.add('open');
+    // 默认折叠，只有错误自动展开；需要看细节时手动点击。
+    if(step.status === 'error'){
+      detail.classList.add('open');
+    }
   }
 }
 
@@ -662,7 +1106,8 @@ async function sendFeedback(isCorrect){
   try{
     await apiFetch('/feedback',{method:'POST',body:JSON.stringify({
       question:currentQuestion, sql:currentSQL,
-      is_correct:isCorrect, corrected_sql:corrected
+      is_correct:isCorrect, corrected_sql:corrected,
+      engine: currentAskEngine,
     })});
     toast(isCorrect?'👍 已加入知识库！':'✏️ 修正版已保存！');
     if(!isCorrect) document.getElementById('correct-form').style.display='none';
@@ -1101,6 +1546,7 @@ function fillRegressionSamples(){
 }
 
 function getRegressionEndpoint(){
+  if(currentAskEngine === 'cube') return '/ask/cube';
   if(currentAskEngine === 'langchain') return '/ask-lc';
   if(currentAskEngine === 'semantic') return '/ask/semantic';
   return '/ask';
@@ -1312,7 +1758,7 @@ async function loadLogs(){
   if(listEl) listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">加载中…</div>';
   if(detailEl) detailEl.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">正在加载调用日志…</div></div>';
   try{
-    const res=await apiFetch('/traces?n=100');
+    const res=await apiFetch('/traces?n=30');
     const traces=res.traces||[];
     const stats=res.stats||{};
     if(statsEl) statsEl.textContent =
@@ -1412,6 +1858,8 @@ async function loadConfig(){
     document.getElementById('cfg-lc-fallback').checked=!!c.langchain_fallback_enabled;
     document.getElementById('cfg-semantic-fallback').checked=!!c.semantic_to_langchain_fallback_enabled;
     document.getElementById('cfg-semantic-sql-rag').checked=!!c.semantic_sql_rag_enabled;
+    document.getElementById('cfg-cube-store-db').value=c.cube_store_database||'cube_store';
+    document.getElementById('cfg-cube-reload-db').checked=!!c.cube_model_reload_each_request;
     document.getElementById('db-info').textContent=`${c.database} @ ${c.host}`;
   }catch(e){ console.warn('loadConfig failed',e); }
 }
@@ -1429,6 +1877,8 @@ async function saveConfig(){
     langchain_fallback_enabled:document.getElementById('cfg-lc-fallback').checked,
     semantic_to_langchain_fallback_enabled:document.getElementById('cfg-semantic-fallback').checked,
     semantic_sql_rag_enabled:document.getElementById('cfg-semantic-sql-rag').checked,
+    cube_store_database:document.getElementById('cfg-cube-store-db').value||'cube_store',
+    cube_model_reload_each_request:document.getElementById('cfg-cube-reload-db').checked,
   };
   try{
     const res=await apiFetch('/config',{method:'POST',body:JSON.stringify(body)});
@@ -1457,12 +1907,18 @@ async function testConn(){
    初始化
 ════════════════════════════════════════════════════════════════════════ */
 (async()=>{
-  // 健康检查
+  // 健康检查 & 顶栏状态更新
   try{
     const h=await apiFetch('/health');
-    document.getElementById('status-dot').className='status-dot '+(h.doris==='ok'?'ok':'err');
+    document.getElementById('status-dot').className='status-dot '+(h.doris==='fail'?'err':'ok');
   }catch(e){ document.getElementById('status-dot').className='status-dot err'; }
 
-  setAskEngine('semantic');
+  // 数据截止时间（取昨天日期）
+  const yesterday = new Date(Date.now() - 86400000);
+  const yStr = yesterday.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}).replace(/\//g,'-');
+  const cutoffEl = document.getElementById('data-cutoff');
+  if(cutoffEl) cutoffEl.textContent = yStr + ' 09:00';
+
+  setAskEngine('cube');
   await showPage('query');
 })();

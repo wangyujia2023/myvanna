@@ -99,9 +99,17 @@ class SemanticSQLCompiler:
         self, spec: QuerySpec, groups: List[SourceGroup], dimensions: List[DimensionDef]
     ) -> str:
         if len(groups) == 1:
-            return self._render_single_group_select(
+            sql = self._render_single_group_select(
                 groups[0], spec, dimensions, compare=None, cte_name=None
             )
+            # 单源表时 ORDER BY / LIMIT 由这里追加（子方法不持有 spec.order_by 和 limit）
+            extra: List[str] = []
+            if spec.order_by:
+                extra.append("ORDER BY " + ", ".join(self._render_order_by(spec.order_by)))
+            has_group_by = bool(self._dimension_projection(groups[0], dimensions))
+            if spec.limit and (has_group_by or spec.order_by):
+                extra.append(f"LIMIT  {spec.limit}")
+            return "\n".join([sql] + extra) if extra else sql
         ctes = []
         final_select = []
         join_lines = []
@@ -126,11 +134,13 @@ class SemanticSQLCompiler:
                 join_lines.append(f"LEFT JOIN {cte_name} {alias} ON {join_condition}")
                 for metric in group.metrics:
                     final_select.append(f"{alias}.{metric.name} AS {metric.name}")
-        lines = [f"WITH\n{',\n'.join(ctes)}", "SELECT " + ",\n       ".join(final_select), f"FROM   src_1 s1"]
+        cte_block = ",\n".join(ctes)
+        sel_block = ",\n       ".join(final_select)
+        lines = [f"WITH\n{cte_block}", "SELECT " + sel_block, "FROM   src_1 s1"]
         lines.extend(join_lines)
         if spec.order_by:
             lines.append("ORDER BY " + ", ".join(self._render_order_by(spec.order_by)))
-        if spec.limit:
+        if spec.limit and (dim_selects or spec.order_by):
             lines.append(f"LIMIT  {spec.limit}")
         return "\n".join(lines)
 
@@ -164,19 +174,23 @@ class SemanticSQLCompiler:
                 f"(cur.{curr_alias} - prev.{curr_alias}) / NULLIF(prev.{curr_alias}, 0) AS {rate_alias}"
             )
             first_rate = first_rate or rate_alias
+        cur_indented  = self._indent(cur_sql, 2)
+        prev_indented = self._indent(prev_sql, 2)
+        sel_block     = ",\n       ".join(select_cols)
+        join_on       = " AND ".join(join_keys) if join_keys else "1=1"
         lines = [
             "WITH",
-            f"cur AS (\n{self._indent(cur_sql, 2)}\n),",
-            f"prev AS (\n{self._indent(prev_sql, 2)}\n)",
-            "SELECT " + ",\n       ".join(select_cols),
+            f"cur AS (\n{cur_indented}\n),",
+            f"prev AS (\n{prev_indented}\n)",
+            "SELECT " + sel_block,
             "FROM   cur",
-            f"LEFT JOIN prev ON {' AND '.join(join_keys) if join_keys else '1=1'}",
+            f"LEFT JOIN prev ON {join_on}",
         ]
         if spec.order_by:
             lines.append("ORDER BY " + ", ".join(self._render_order_by(spec.order_by)))
         elif first_rate:
             lines.append(f"ORDER BY {first_rate} DESC")
-        if spec.limit:
+        if spec.limit and (join_keys or spec.order_by):
             lines.append(f"LIMIT  {spec.limit}")
         return "\n".join(lines)
 
@@ -284,12 +298,15 @@ class SemanticSQLCompiler:
         return (f"{join_alias}.{field}", field)
 
     def _metric_expr(self, metric: MetricDef, fact_alias: str) -> str:
+        # 优先使用 expression（已包含完整聚合函数），避免 ratio 降级时丢失 COUNT(DISTINCT)
+        if metric.expression:
+            return metric.expression.replace("{alias}", fact_alias)
+        # expression 为空时才使用 num/den 拆分（ratio 兜底）
         if metric.metric_type == "ratio":
             num = (metric.numerator_expr or "1").replace("{alias}", fact_alias)
             den = (metric.denominator_expr or "1").replace("{alias}", fact_alias)
             return f"ROUND(SUM({num}) / NULLIF(SUM({den}), 0), 4)"
-        expr = metric.expression or "COUNT(*)"
-        return expr.replace("{alias}", fact_alias)
+        return "COUNT(*)"
 
     def _render_time_clause(
         self, time_column: str, start: str, end: str, fact_alias: str

@@ -1,9 +1,21 @@
 <div class="page" id="page-config">
-  <div style="max-width:640px;width:100%;padding:24px">
-    <h2 style="font-size:16px;font-weight:700;margin-bottom:20px">🔧 连接与模型配置</h2>
+  <div class="config-shell">
+    <div class="config-hero">
+      <div>
+        <div class="eyebrow">Agent Runtime Console</div>
+        <h2>Agent 调试台</h2>
+        <p>集中维护 Doris、Qwen、Cube 与降级策略。这里的配置会重置运行时连接，适合调试完整调用链路。</p>
+      </div>
+      <div class="config-hero-card">
+        <span class="hero-k">Mode</span>
+        <strong>Cube First</strong>
+        <span>受控语义编译 · 可追踪</span>
+      </div>
+    </div>
 
-    <div class="card">
-      <div class="card-header"><span class="card-title">🗄️ Doris 连接</span></div>
+    <div class="config-grid">
+    <div class="card glow-card">
+      <div class="card-header"><span class="card-title">Doris 连接</span><span class="card-kicker">Warehouse</span></div>
       <div class="card-body">
         <div class="form-grid" style="margin-bottom:12px">
           <div class="form-group">
@@ -30,8 +42,8 @@
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header"><span class="card-title">🤖 Qwen 配置</span></div>
+    <div class="card glow-card">
+      <div class="card-header"><span class="card-title">Qwen 配置</span><span class="card-kicker">LLM</span></div>
       <div class="card-body">
         <div class="form-group" style="margin-bottom:12px">
           <label class="form-label">API Key</label>
@@ -78,7 +90,26 @@
       </div>
     </div>
 
-    <div style="display:flex;gap:10px">
+    <div class="card glow-card">
+      <div class="card-header"><span class="card-title">Cube 配置</span><span class="card-kicker">Semantic Compiler</span></div>
+      <div class="card-body">
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">Cube 配置库</label>
+          <input class="form-input" id="cfg-cube-store-db" value="cube_store">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cube 模型加载模式</label>
+          <label style="display:flex;align-items:center;gap:10px;color:var(--text2);font-size:13px">
+            <input id="cfg-cube-reload-db" type="checkbox">
+            每次请求都从 Doris 重新加载 Cube 模型
+          </label>
+          <div class="form-hint">默认关闭。关闭时首次加载到内存，后续查询不再访问 cube_store；修改配置后可保存重置连接或调用模型重载接口刷新。</div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="config-actions">
       <button class="btn btn-primary" onclick="saveConfig()">💾 保存并重置连接</button>
       <button class="btn btn-secondary" onclick="loadConfig()">🔄 重新加载</button>
       <button class="btn btn-secondary" onclick="testConn()">🔌 测试连接</button>

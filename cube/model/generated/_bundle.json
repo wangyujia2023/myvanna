@@ -1,0 +1,10 @@
+{
+  "version_no": 1,
+  "checksum": "3be8a14112e153b582ef4faf8d584b4f",
+  "files": [
+    "orders.js",
+    "refunds.js",
+    "stores.js",
+    "users.js"
+  ]
+}

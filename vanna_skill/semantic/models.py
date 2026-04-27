@@ -111,6 +111,11 @@ class MetricDef:
     synonyms: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
 
+    # ── 模板查询模式（topn_per_group / pivot / 空=普通聚合）
+    query_pattern: str = ""
+    # template_params 示例：{"partition_dim": "city_dim", "top_n": 3, "order_dir": "DESC"}
+    template_params: Dict = field(default_factory=dict)
+
     # ── 图关系（由 SemanticGraph 填充）
     entity_deps: List[str] = field(default_factory=list)
 

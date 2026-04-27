@@ -25,6 +25,9 @@ DEFAULT_CONFIG = {
     "embedding_fallback_mode": "fail",  # "keyword" | "fail"
     "semantic_to_langchain_fallback_enabled": False,
     "semantic_sql_rag_enabled": True,
+    "cube_store_database": "cube_store",
+    "cube_generated_dir": "cube/model/generated",
+    "cube_model_reload_each_request": False,
     "initial_prompt": "",
     "prompt_versions": [],
     "active_prompt_version": "default",
@@ -47,6 +50,9 @@ def _normalize_prompt_config(config: dict) -> dict:
     )
     config["semantic_sql_rag_enabled"] = bool(
         config.get("semantic_sql_rag_enabled", False)
+    )
+    config["cube_model_reload_each_request"] = bool(
+        config.get("cube_model_reload_each_request", False)
     )
     prompt_versions = config.get("prompt_versions") or []
     initial_prompt = config.get("initial_prompt", "")

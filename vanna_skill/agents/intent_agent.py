@@ -19,6 +19,7 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ..core.security import DESTRUCTIVE_INTENT_PATTERN, DESTRUCTIVE_INTENT_MESSAGE
 from ..semantic.models import IntentPlan
 
 if TYPE_CHECKING:
@@ -31,16 +32,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # 正则：破坏性关键词快速拦截（与 intent_parse_skill 保持一致）
 # ─────────────────────────────────────────────────────────────────────────────
-_DDL_PATTERN = re.compile(
-    r"(?:"
-    r"删(?:除|掉|库|表|数据|字段|列|行)|清空|清除数据|改表|改字段|加字段|删字段"
-    r"|建表|建库|新建表|修改表|修改字段|截断|丢弃"
-    r"|"
-    r"(?<![a-zA-Z_])(?:drop|alter|truncate|delete|update|insert"
-    r"|create\s+table|grant|revoke|replace\s+into)(?![a-zA-Z_])"
-    r")",
-    re.IGNORECASE,
-)
+_DDL_PATTERN = DESTRUCTIVE_INTENT_PATTERN
 
 # 正则：时间提示识别（从用户问句中提取，供 SemanticParseAgent 使用）
 _TIME_PATTERNS: List[tuple] = [
@@ -101,7 +93,7 @@ class IntentUnderstandingAgent:
                 complexity="simple",
                 raw_question=question,
                 normalized_query=question,
-                rejection_reason="请求包含写操作或破坏性指令，系统仅支持 SELECT 查询。",
+                rejection_reason=DESTRUCTIVE_INTENT_MESSAGE,
             )
 
         # 2. 提取时间提示（本地，不走 LLM）

@@ -39,7 +39,7 @@ dimensions:
     table: dim_sku_info
     alias: dsku
     join_type: LEFT JOIN
-    'on': ''
+    'on': '{fact_alias}.sku_id = dsku.sku_id'
   select_fields:
   - category_1_id
   - category_1_name
@@ -104,23 +104,59 @@ dimensions:
   dim_type: entity_ref
   entity: user
   alias: u
+- name: city_dim
+  label: 城市维度
+  dim_type: attribute
+  description: 按城市/地区分组，city_code 字段
+  expression: '{fact_alias}.city_code'
+  alias: city_code
+  synonyms:
+  - 城市
+  - 地区
+  - 地域
+  - 区域
+  - 城市维度
+  tags:
+  - geo
+- name: region_dim
+  label: 大区维度
+  dim_type: attribute
+  description: 按大区（华东/华南/华北等）分组
+  expression: '{fact_alias}.region_code'
+  alias: region_code
+  synonyms:
+  - 大区
+  - 区域
+  - 华东
+  - 华南
+  - 华北
+  - 地区
+  tags:
+  - geo
 - name: user_type_dim
   label: 用户类型维度
   dim_type: entity_ref
-  description: 按用户类型（VIP/普通）分组
+  description: 按用户类型（PLUS会员/普通会员）分组，关联 dim_user_info
   entity: user
   join:
     table: dim_user_info
     alias: u
     join_type: LEFT JOIN
-    'on': ''
+    'on': '{fact_alias}.user_id = u.user_id'
   select_fields:
-  - is_plus_vip
+  - 'CASE WHEN u.is_plus_vip = 1 THEN ''PLUS会员'' ELSE ''普通会员'' END AS member_type'
   - user_level
+  filter_column: 'u.is_plus_vip'
+  filter_value_map:
+    PLUS会员: 1
+    VIP会员: 1
+    普通会员: 0
   synonyms:
   - 用户类型
   - 会员类型
   - VIP类型
+  - PLUS会员
+  - 会员等级
   tags:
   - user
 metrics:
@@ -260,6 +296,11 @@ metrics:
   primary_source:
     table: dwd_trade_order_wide
     alias: o
+  extra_joins:
+  - table: dwd_trade_refund_fact
+    alias: r
+    join_type: LEFT JOIN
+    'on': 'o.order_id = r.order_id'
   time_column: o.dt
   output_format: currency
 - name: order_count
@@ -344,6 +385,47 @@ metrics:
   - user
   - retention
   - rate
+- name: plus_gmv
+  label: PLUS会员消费金额
+  metric_type: simple
+  description: PLUS会员产生的总消费金额
+  expression: SUM(CASE WHEN u.is_plus_vip = 1 THEN o.apportion_amt ELSE 0 END)
+  primary_source:
+    table: dwd_trade_order_wide
+    alias: o
+  extra_joins:
+  - table: dim_user_info
+    alias: u
+    join_type: LEFT JOIN
+    'on': 'o.user_id = u.user_id'
+  time_column: o.dt
+  output_format: currency
+  unit: 元
+  compatible_dimensions:
+  - time_day
+  - time_month
+  - time_quarter
+  - city_dim
+  - region_dim
+  - store_dim
+  - sku_dim
+  - category_dim
+  synonyms:
+  - PLUS消费
+  - PLUS会员消费
+  - PLUS会员消费金额
+  - PLUS会员总消费
+  - PLUS消费额
+  - PLUS消费金额
+  - VIP消费
+  - VIP消费金额
+  - 会员消费
+  - 会员消费金额
+  - plus会员消费
+  tags:
+  - user
+  - vip
+  - revenue
 - name: vip_buyer_count
   label: VIP买家数
   metric_type: simple
@@ -356,17 +438,23 @@ metrics:
   - table: dim_user_info
     alias: u
     join_type: LEFT JOIN
-    'on': ''
+    'on': 'o.user_id = u.user_id'
   time_column: o.dt
   unit: 人
   compatible_dimensions:
+  - time_day
   - time_month
+  - time_quarter
+  - city_dim
+  - region_dim
   - store_dim
   synonyms:
   - VIP买家
   - VIP用户
   - VIP人数
   - VIP数量
+  - PLUS买家数
+  - PLUS用户数
   tags:
   - user
   - vip
@@ -393,7 +481,7 @@ metrics:
   - table: dim_user_info
     alias: u
     join_type: LEFT JOIN
-    'on': ''
+    'on': 'o.user_id = u.user_id'
   time_column: o.dt
   output_format: percent
   unit: '%'

@@ -61,6 +61,13 @@ def canonical_hash(question: str) -> str:
     return hashlib.md5((question or "").encode("utf-8")).hexdigest()
 
 
+def stable_rag_id(canonical_question: str, sql_text: str) -> int:
+    digest = hashlib.md5(
+        f"{canonical_question}\n{(sql_text or '').strip()}".encode("utf-8")
+    ).hexdigest()
+    return int(digest[:15], 16)
+
+
 class SemanticSQLRAGStore:
     def __init__(
         self,
@@ -128,9 +135,13 @@ class SemanticSQLRAGStore:
         self._sem.execute_write("DELETE FROM semantic_store.vanna_semantic_sql_rag")
 
         inserted = 0
-        for idx, item in enumerate(dedup.values(), start=1):
+        for item in dedup.values():
             try:
                 vec = self._embed.get_embedding(item["canonical_question"])
+                rag_id = stable_rag_id(
+                    item["canonical_question"],
+                    item.get("sql_text", ""),
+                )
                 self._sem.execute_write(
                     """
                     INSERT INTO semantic_store.vanna_semantic_sql_rag
@@ -139,7 +150,7 @@ class SemanticSQLRAGStore:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        idx,
+                        rag_id,
                         item.get("id"),
                         item.get("question", ""),
                         item["canonical_question"],
@@ -168,6 +179,56 @@ class SemanticSQLRAGStore:
             "inserted": inserted,
         }
 
+    def upsert_feedback_sample(
+        self,
+        question: str,
+        sql_text: str,
+        *,
+        source: str,
+        quality_score: float = 1.0,
+        source_sql_id: int | None = None,
+    ) -> str:
+        self.ensure_table()
+        canonical = canonicalize_question(question)
+        if not canonical or not (sql_text or "").strip():
+            return "skipped"
+        rag_id = stable_rag_id(canonical, sql_text)
+        exists = self._sem.execute(
+            """
+            SELECT rag_id
+            FROM semantic_store.vanna_semantic_sql_rag
+            WHERE rag_id = %s
+            LIMIT 1
+            """,
+            (rag_id,),
+        )
+        if exists:
+            return "exists"
+
+        vec = self._embed.get_embedding(canonical)
+        self._sem.execute_write(
+            """
+            INSERT INTO semantic_store.vanna_semantic_sql_rag
+                (rag_id, source_sql_id, raw_question, canonical_question, sql_text,
+                 source, db_name, quality_score, embedding, canonical_hash, metadata_json)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                rag_id,
+                source_sql_id,
+                question,
+                canonical,
+                sql_text,
+                source,
+                self._db_name,
+                quality_score,
+                json.dumps(vec),
+                canonical_hash(canonical),
+                json.dumps({"raw_question": question}, ensure_ascii=False),
+            ),
+        )
+        return "inserted"
+
     def search(
         self,
         question: str,
@@ -193,4 +254,6 @@ class SemanticSQLRAGStore:
         )
         for row in rows:
             row["query_canonical_question"] = canonical
+            dist = float(row.get("dist", 0) or 0)
+            row["similarity"] = max(0.0, min(1.0, 1.0 - dist))
         return rows

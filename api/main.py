@@ -4,12 +4,13 @@ Vanna Skill REST API  +  SSE 实时推送
 """
 import json
 import logging
+import hashlib
 import queue as queue_module
 import re
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,16 +21,17 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from vanna_skill import DorisVanna, tracer, load_config, save_config, AskLCPipeline, DorisClient, PromptStore, LineageManager, invalidate_lineage_cache
+from vanna_skill import DorisVanna, tracer, load_config, save_config, AskLCPipeline, DorisClient, PromptStore, LineageManager, invalidate_lineage_cache, CubeService, CubePipeline
 from vanna_skill.pipelines.semantic_pipeline import SemanticPipeline
+from vanna_skill.semantic.semantic_sql_rag import SemanticSQLRAGStore
 from vanna_skill.semantic.catalog import invalidate_semantic_cache
 from vanna_skill.semantic.schema_scanner import SchemaScanner
+from vanna_skill.cube.service import CubeFilter, CubeQuery
+from vanna_skill.core.security import assert_readonly_sql
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
-
-_READ_ONLY_SQL_PATTERN = re.compile(r"^\s*(WITH\b|SELECT\b)", re.IGNORECASE)
 
 # ── 配置（统一从 config.json 读取）───────────────────────────────────────────
 CONFIG = load_config()
@@ -43,6 +45,61 @@ _vanna: Optional[DorisVanna] = None
 _ask_lc_pipeline: Optional[AskLCPipeline] = None
 _semantic_pipeline: Optional[SemanticPipeline] = None
 _prompt_store: Optional[PromptStore] = None
+_cube_service: Optional[CubeService] = None
+_cube_pipeline: Optional[CubePipeline] = None
+_cube_admin_client: Optional[DorisClient] = None
+
+
+CUBE_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
+    "models": {
+        "table": "cube_models",
+        "pk": "model_id",
+        "order": "cube_name",
+        "fields": ["model_id", "cube_name", "title", "sql_table", "sql_expression", "data_source", "public_flag", "visible", "version"],
+    },
+    "measures": {
+        "table": "cube_measures",
+        "pk": "measure_id",
+        "order": "cube_name, measure_name",
+        "fields": ["measure_id", "cube_name", "measure_name", "title", "description", "sql_expr", "measure_type", "format", "drill_members_json", "visible", "version"],
+    },
+    "dimensions": {
+        "table": "cube_dimensions",
+        "pk": "dimension_id",
+        "order": "cube_name, dimension_name",
+        "fields": ["dimension_id", "cube_name", "dimension_name", "title", "description", "sql_expr", "dimension_type", "primary_key_flag", "enum_mapping_json", "hierarchy_json", "visible", "version"],
+    },
+    "dimension-values": {
+        "table": "cube_dimension_values",
+        "pk": "value_id",
+        "order": "cube_name, dimension_name, usage_count DESC, value_label",
+        "fields": ["value_id", "cube_name", "dimension_name", "value_code", "value_label", "aliases_json", "source", "source_table", "source_column", "usage_count", "visible", "version"],
+    },
+    "joins": {
+        "table": "cube_joins",
+        "pk": "join_id",
+        "order": "cube_name, target_cube",
+        "fields": ["join_id", "cube_name", "target_cube", "relationship", "join_type", "join_sql", "visible", "version"],
+    },
+    "segments": {
+        "table": "cube_segments",
+        "pk": "segment_id",
+        "order": "cube_name, segment_name",
+        "fields": ["segment_id", "cube_name", "segment_name", "title", "description", "filter_sql", "visible", "version"],
+    },
+    "templates": {
+        "table": "cube_sql_templates",
+        "pk": "template_id",
+        "order": "template_type, template_name",
+        "fields": ["template_id", "template_name", "template_type", "title", "template_sql", "params_json", "visible", "version"],
+    },
+    "versions": {
+        "table": "cube_model_versions",
+        "pk": "version_id",
+        "order": "version_no DESC, updated_at DESC",
+        "fields": ["version_id", "version_no", "checksum", "status", "remark"],
+    },
+}
 
 
 def get_prompt_store() -> PromptStore:
@@ -89,6 +146,52 @@ def get_semantic_pipeline() -> SemanticPipeline:
     if _semantic_pipeline is None:
         _semantic_pipeline = SemanticPipeline(build_runtime_config())
     return _semantic_pipeline
+
+
+def get_cube_service() -> CubeService:
+    global _cube_service, CONFIG
+    if _cube_service is None:
+        _cube_service = CubeService(CONFIG.copy())
+    return _cube_service
+
+
+def get_cube_pipeline() -> CubePipeline:
+    global _cube_pipeline, CONFIG
+    if _cube_pipeline is None:
+        _cube_pipeline = CubePipeline(CONFIG.copy(), get_cube_service())
+    return _cube_pipeline
+
+
+def get_cube_admin_client() -> DorisClient:
+    global _cube_admin_client, CONFIG
+    if _cube_admin_client is None:
+        _cube_admin_client = DorisClient(
+            host=CONFIG["host"],
+            port=CONFIG["port"],
+            user=CONFIG["user"],
+            password=CONFIG.get("password", ""),
+            database=CONFIG.get("cube_store_database", "cube_store"),
+        )
+    return _cube_admin_client
+
+
+def _cube_entity_meta(entity: str) -> dict[str, Any]:
+    meta = CUBE_ADMIN_ENTITIES.get(entity)
+    if not meta:
+        raise HTTPException(404, f"未知 Cube 实体: {entity}")
+    return meta
+
+
+def _stable_bigint(*parts: Any) -> int:
+    raw = "\n".join(str(part or "") for part in parts)
+    return int(hashlib.md5(raw.encode("utf-8")).hexdigest()[:15], 16)
+
+
+def validate_readonly_sql(sql: str) -> None:
+    try:
+        assert_readonly_sql(sql)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 # ── 前端静态文件 ──────────────────────────────────────────────────────────────
 UI_DIR = Path(__file__).parent.parent / "ui"
@@ -216,6 +319,7 @@ class FeedbackRequest(BaseModel):
     sql: str
     is_correct: bool
     corrected_sql: Optional[str] = None
+    engine: str = "vanna"
 
 class ConfigRequest(BaseModel):
     host: str
@@ -229,6 +333,8 @@ class ConfigRequest(BaseModel):
     langchain_fallback_enabled: bool = False
     semantic_to_langchain_fallback_enabled: bool = False
     semantic_sql_rag_enabled: bool = False
+    cube_store_database: str = "cube_store"
+    cube_model_reload_each_request: bool = False
 
 
 class SystemPromptRequest(BaseModel):
@@ -252,19 +358,41 @@ class ABTestRequest(BaseModel):
     version_b: str = ""
 
 
+class CubeFilterRequest(BaseModel):
+    member: str
+    operator: str = "equals"
+    values: list[Any] = Field(default_factory=list)
+
+
+class CubeGenerateSQLRequest(BaseModel):
+    metrics: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    filters: list[CubeFilterRequest] = Field(default_factory=list)
+    segments: list[str] = Field(default_factory=list)
+    order: list[dict[str, str]] = Field(default_factory=list)
+    limit: Optional[int] = None
+    rag_hints: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CubeAdminUpsertRequest(BaseModel):
+    row: dict[str, Any]
+
+
+class CubeEnumCollectRequest(BaseModel):
+    max_values: int = 200
+    max_cardinality: int = 500
+
+
 @app.get("/health")
 def health():
-    try:
-        vn = get_vanna()
-        ok = vn._biz.test()
-        stats = vn.gemini_stats
-        return {"status": "healthy" if ok else "degraded",
-                "doris": "ok" if ok else "fail",
-                "qwen_stats": stats,
-                "gemini_stats": stats,
-                "tracer_stats": tracer.stats()}
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    stats = _vanna.gemini_stats if _vanna is not None else {}
+    return {
+        "status": "healthy",
+        "doris": "lazy",
+        "qwen_stats": stats,
+        "gemini_stats": stats,
+        "tracer_stats": tracer.stats(),
+    }
 
 
 @app.post("/ask")
@@ -285,12 +413,268 @@ def ask_lc(req: AskRequest):
         raise HTTPException(500, str(e))
 
 
+@app.post("/ask/cube")
+def ask_cube(req: AskRequest):
+    try:
+        result = get_cube_pipeline().run(req.question)
+        if result.get("sql"):
+            validate_readonly_sql(result["sql"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"[ask/cube] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/ask/cube/stream")
+def ask_cube_stream(q: str = Query(..., description="自然语言问题")):
+    """
+    Cube 路径 SSE 实时推送，逐步骤展示调用链路。
+    事件类型: start | step_start | step_done | final | error
+    """
+    step_queue: queue_module.Queue = queue_module.Queue()
+
+    def callback(event_type: str, data: dict):
+        step_queue.put((event_type, data))
+
+    def run_ask():
+        try:
+            get_cube_pipeline().run(q, step_callback=callback)
+        except Exception as e:
+            step_queue.put(("error", {"error": str(e)}))
+
+    threading.Thread(target=run_ask, daemon=True).start()
+
+    def event_generator():
+        while True:
+            try:
+                event_type, data = step_queue.get(timeout=60)
+                payload = json.dumps(data, ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {payload}\n\n"
+                if event_type in ("final", "error"):
+                    break
+            except queue_module.Empty:
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.get("/cube/model/version")
+def cube_model_version():
+    try:
+        get_cube_service().ensure_models()
+        return get_cube_service().get_model_status()
+    except Exception as e:
+        logger.exception(f"[cube/model/version] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/cube/reload-model")
+def cube_reload_model():
+    try:
+        return get_cube_service().reload_models()
+    except Exception as e:
+        logger.exception(f"[cube/reload-model] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/cube/generate_sql")
+def cube_generate_sql(req: CubeGenerateSQLRequest):
+    try:
+        cube_query = CubeQuery(
+            metrics=req.metrics,
+            dimensions=req.dimensions,
+            filters=[
+                CubeFilter(
+                    member=item.member,
+                    operator=item.operator,
+                    values=item.values,
+                )
+                for item in req.filters
+            ],
+            segments=req.segments,
+            order=req.order,
+            limit=req.limit,
+            rag_hints=req.rag_hints,
+        )
+        result = get_cube_service().generate_sql(cube_query)
+        if result.get("sql"):
+            validate_readonly_sql(result["sql"])
+        return result
+    except Exception as e:
+        logger.exception(f"[cube/generate_sql] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/cube/admin/entities")
+def cube_admin_entities():
+    return {
+        "entities": [
+            {
+                "name": name,
+                "table": meta["table"],
+                "pk": meta["pk"],
+                "fields": meta["fields"],
+            }
+            for name, meta in CUBE_ADMIN_ENTITIES.items()
+        ]
+    }
+
+
+@app.get("/cube/admin/{entity}")
+def cube_admin_list(entity: str, limit: int = 300):
+    meta = _cube_entity_meta(entity)
+    limit = max(1, min(int(limit or 300), 1000))
+    fields = ", ".join(meta["fields"] + ["updated_at"])
+    rows = get_cube_admin_client().execute(
+        f"""
+        SELECT {fields}
+        FROM cube_store.{meta['table']}
+        ORDER BY {meta['order']}
+        LIMIT {limit}
+        """
+    )
+    return {
+        "entity": entity,
+        "table": meta["table"],
+        "pk": meta["pk"],
+        "fields": meta["fields"],
+        "rows": rows,
+    }
+
+
+@app.post("/cube/admin/{entity}")
+def cube_admin_upsert(entity: str, req: CubeAdminUpsertRequest):
+    meta = _cube_entity_meta(entity)
+    row = {k: v for k, v in (req.row or {}).items() if k in meta["fields"]}
+    pk = meta["pk"]
+    if pk not in row or row.get(pk) in ("", None):
+        row[pk] = _stable_bigint(entity, json.dumps(row, ensure_ascii=False, sort_keys=True))
+    if not row:
+        raise HTTPException(400, "row 不能为空")
+    columns = [col for col in meta["fields"] if col in row]
+    placeholders = ", ".join(["%s"] * len(columns))
+    values = [row[col] for col in columns]
+    get_cube_admin_client().execute_write(
+        f"""
+        INSERT INTO cube_store.{meta['table']} ({", ".join(columns)})
+        VALUES ({placeholders})
+        """,
+        values,
+    )
+    return {"status": "ok", "entity": entity, "pk": pk, "id": row[pk]}
+
+
+@app.delete("/cube/admin/{entity}/{row_id}")
+def cube_admin_delete(entity: str, row_id: str):
+    meta = _cube_entity_meta(entity)
+    get_cube_admin_client().execute_write(
+        f"DELETE FROM cube_store.{meta['table']} WHERE {meta['pk']} = %s",
+        (row_id,),
+    )
+    return {"status": "ok", "entity": entity, "deleted": row_id}
+
+
+@app.post("/cube/admin/{entity}/sync-cache")
+def cube_admin_sync_cache(entity: str):
+    _cube_entity_meta(entity)
+    return get_cube_service().reload_models()
+
+
+@app.post("/cube/admin/dimension-values/collect")
+def cube_collect_dimension_values(req: CubeEnumCollectRequest):
+    client = get_cube_admin_client()
+    max_values = max(1, min(int(req.max_values or 200), 1000))
+    max_cardinality = max(1, min(int(req.max_cardinality or 500), 5000))
+    dims = client.execute(
+        """
+        SELECT d.cube_name, d.dimension_name, d.sql_expr, d.dimension_type, m.sql_table
+        FROM cube_store.cube_dimensions d
+        JOIN cube_store.cube_models m ON d.cube_name = m.cube_name
+        WHERE d.visible = 1
+          AND m.visible = 1
+          AND d.dimension_type IN ('string', 'number', 'boolean')
+        ORDER BY d.cube_name, d.dimension_name
+        """
+    )
+    simple_col = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    inserted = 0
+    skipped: list[dict[str, Any]] = []
+    collected: list[dict[str, Any]] = []
+    for dim in dims:
+        cube_name = dim["cube_name"]
+        dimension_name = dim["dimension_name"]
+        column = (dim.get("sql_expr") or "").strip()
+        table = (dim.get("sql_table") or "").strip()
+        if not table or not simple_col.match(column):
+            skipped.append({"dimension": f"{cube_name}.{dimension_name}", "reason": "sql_expr 非简单列名"})
+            continue
+        rows = client.execute(
+            f"""
+            SELECT CAST({column} AS STRING) AS value_code, COUNT(*) AS usage_count
+            FROM {table}
+            WHERE {column} IS NOT NULL
+            GROUP BY {column}
+            ORDER BY usage_count DESC
+            LIMIT {max_cardinality + 1}
+            """
+        )
+        if len(rows) > max_cardinality:
+            skipped.append({"dimension": f"{cube_name}.{dimension_name}", "reason": f"基数超过 {max_cardinality}"})
+            continue
+        count = 0
+        for row in rows[:max_values]:
+            value_code = str(row.get("value_code") or "").strip()
+            if not value_code:
+                continue
+            value_id = _stable_bigint(cube_name, dimension_name, value_code)
+            usage_count = int(row.get("usage_count", 0) or 0)
+            client.execute_write(
+                """
+                INSERT INTO cube_store.cube_dimension_values
+                  (value_id, cube_name, dimension_name, value_code, value_label,
+                   aliases_json, source, source_table, source_column, usage_count, visible, version)
+                VALUES (%s, %s, %s, %s, %s, %s, 'scan', %s, %s, %s, 1, 1)
+                """,
+                (
+                    value_id,
+                    cube_name,
+                    dimension_name,
+                    value_code,
+                    value_code,
+                    "[]",
+                    table,
+                    column,
+                    usage_count,
+                ),
+            )
+            inserted += 1
+            count += 1
+        collected.append({"dimension": f"{cube_name}.{dimension_name}", "count": count})
+    manifest = get_cube_service().reload_models()
+    return {
+        "status": "ok",
+        "inserted": inserted,
+        "collected": collected,
+        "skipped": skipped,
+        "model": manifest,
+    }
+
+
 @app.post("/execute")
 def execute_sql(body: dict):
     """执行 SQL 并返回结果"""
     sql = body.get("sql", "")
-    if not _READ_ONLY_SQL_PATTERN.match(sql or ""):
-        raise HTTPException(400, "只允许只读查询（SELECT / WITH ... SELECT）")
+    validate_readonly_sql(sql)
     try:
         logger.info("[execute] 执行 SQL:\n%s", sql)
         df = get_vanna().run_sql(sql)
@@ -347,6 +731,7 @@ def get_lineage_sources(limit: int = 300):
 
 @app.post("/training-data/sql")
 def add_sql(req: TrainSqlRequest):
+    validate_readonly_sql(req.sql)
     get_vanna().add_question_sql(req.question, req.sql, source=req.source)
     return {"status": "ok"}
 
@@ -476,21 +861,46 @@ def rebuild_lineage():
 @app.post("/feedback")
 def feedback(req: FeedbackRequest):
     vn = get_vanna()
+    rag_enabled_engines = {"semantic", "cube"}
+
+    def _upsert_sql_rag(question: str, sql: str, source: str) -> str:
+        if req.engine not in rag_enabled_engines:
+            return ""
+        semantic_client = DorisClient(
+            host=CONFIG["host"],
+            port=CONFIG["port"],
+            user=CONFIG["user"],
+            password=CONFIG.get("password", ""),
+            database="semantic_store",
+        )
+        store = SemanticSQLRAGStore(
+            semantic_client,
+            semantic_client,
+            get_cube_pipeline()._llm if req.engine == "cube" else get_semantic_pipeline()._llm,
+            db_name=CONFIG.get("database", "retail_dw"),
+        )
+        return store.upsert_feedback_sample(question, sql, source=source)
+
     if req.is_correct:
+        validate_readonly_sql(req.sql)
         vn.add_question_sql(req.question, req.sql, source="feedback")
-        return {"status": "ok", "action": "added"}
+        semantic_action = _upsert_sql_rag(req.question, req.sql, "feedback")
+        return {"status": "ok", "action": "added", "semantic_rag_action": semantic_action}
     elif req.corrected_sql:
+        validate_readonly_sql(req.corrected_sql)
         vn.add_question_sql(req.question, req.corrected_sql,
                             source="feedback_corrected")
-        return {"status": "ok", "action": "corrected"}
+        semantic_action = _upsert_sql_rag(req.question, req.corrected_sql, "feedback_corrected")
+        return {"status": "ok", "action": "corrected", "semantic_rag_action": semantic_action}
     return {"status": "ok", "action": "negative_recorded"}
 
 
 # ── 调用链路日志 ──────────────────────────────────────────────────────────────
 
 @app.get("/traces")
-def get_traces(n: int = 100):
+def get_traces(n: int = 30):
     vn = get_vanna()
+    n = max(1, min(int(n or 30), 30))
     try:
         traces = vn.get_trace_logs(n)
     except Exception:
@@ -527,7 +937,7 @@ def get_config():
 
 @app.post("/config")
 def update_config(req: ConfigRequest):
-    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store
+    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store, _cube_service, _cube_pipeline, _cube_admin_client
     qwen_api_key = req.qwen_api_key.strip()
     updated = CONFIG.copy()
     updated.update({
@@ -540,6 +950,8 @@ def update_config(req: ConfigRequest):
         "embedding_fallback_mode": "keyword" if req.langchain_fallback_enabled else "fail",
         "semantic_to_langchain_fallback_enabled": req.semantic_to_langchain_fallback_enabled,
         "semantic_sql_rag_enabled": req.semantic_sql_rag_enabled,
+        "cube_store_database": req.cube_store_database.strip() or "cube_store",
+        "cube_model_reload_each_request": req.cube_model_reload_each_request,
     })
     if qwen_api_key and "..." not in qwen_api_key:
         updated["qwen_api_key"] = qwen_api_key
@@ -548,6 +960,9 @@ def update_config(req: ConfigRequest):
     _ask_lc_pipeline = None
     _semantic_pipeline = None
     _prompt_store = None
+    _cube_service = None
+    _cube_pipeline = None
+    _cube_admin_client = None
     invalidate_semantic_cache()
     return {"status": "ok", "message": "配置已更新，连接已重置"}
 

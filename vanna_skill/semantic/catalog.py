@@ -347,7 +347,9 @@ class SemanticCatalog:
                    extra_joins_json, time_column,
                    numerator_expr, denominator_expr,
                    output_format, unit,
-                   compatible_dimensions_json, synonyms, tags
+                   compatible_dimensions_json, synonyms, tags,
+                   IFNULL(query_pattern,'')      AS query_pattern,
+                   IFNULL(template_params_json,'{}') AS template_params_json
             FROM semantic_store.vanna_semantic_metrics
             WHERE is_active = 1
               AND (db_name = %s OR IFNULL(db_name,'') = '')
@@ -385,6 +387,10 @@ class SemanticCatalog:
                     ),
                     synonyms=_split_csv(r.get("synonyms")),
                     tags=_split_csv(r.get("tags")),
+                    query_pattern=r.get("query_pattern") or "",
+                    template_params=json.loads(
+                        r.get("template_params_json") or "{}"
+                    ),
                 )
                 result[m.name] = m
             except Exception as ex:

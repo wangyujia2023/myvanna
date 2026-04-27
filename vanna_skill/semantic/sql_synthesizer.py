@@ -61,6 +61,17 @@ class SQLSynthesizer:
         -------
         str  格式化好的 SQL 字符串
         """
+        # ── 特殊查询模式路由 ─────────────────────────────────────────────────
+        for m in metrics:
+            if m.query_pattern == "topn_per_group":
+                logger.debug(
+                    "[SQLSynthesizer] topn_per_group 路径: metric=%s params=%s",
+                    m.name, m.template_params,
+                )
+                return self._synthesize_topn_per_group(
+                    task, metrics, dimensions, time_range
+                )
+        # ── 普通聚合路径 ─────────────────────────────────────────────────────
         ctx = self._build_context(task, metrics, dimensions, time_range)
         return self._render(ctx)
 
@@ -319,6 +330,148 @@ class SQLSynthesizer:
             if field:
                 cols.append(f"{field} {direction}")
         return cols
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 特殊模式：TopN per group（窗口函数子查询）
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _synthesize_topn_per_group(
+        self,
+        task: QueryTask,
+        metrics: List[MetricDef],
+        dimensions: List[DimensionDef],
+        time_range: Optional[Tuple[str, str]],
+    ) -> str:
+        """
+        生成 ROW_NUMBER() OVER (PARTITION BY …) 形式的 TopN 子查询 SQL。
+
+        模板结构：
+          SELECT {outer_cols}
+          FROM (
+            SELECT {inner_cols},
+                   {metric_expr} AS {metric_name},
+                   ROW_NUMBER() OVER (
+                     PARTITION BY {partition_alias}
+                     ORDER BY {metric_expr} {order_dir}
+                   ) AS rk
+            FROM   {primary_table} {primary_alias}
+            {join_clauses}
+            WHERE  …
+            GROUP BY {inner_group_by}
+          ) _ranked
+          WHERE  rk <= {top_n}
+          ORDER BY {partition_alias}, rk
+        """
+        # 取出第一个 topn_per_group 指标（通常只有一个）
+        metric = next(m for m in metrics if m.query_pattern == "topn_per_group")
+        params = metric.template_params or {}
+
+        primary_alias = metric.primary_alias
+        primary_table = metric.primary_table
+        top_n = task.limit or params.get("top_n", 3)
+        order_dir = params.get("order_dir", "DESC").upper()
+        partition_dim_name = params.get("partition_dim", "")
+
+        # 1. 收集 JOINs（去重）
+        seen: Set[str] = {primary_alias}
+        joins = self._collect_joins(metrics, dimensions, seen, primary_alias)
+
+        # 2. 时间列
+        time_col = metric.time_column.replace("{alias}", primary_alias)
+
+        # 3. 找到 partition 维度 & 其余维度（group 维度）
+        partition_dim = next(
+            (d for d in dimensions if d.name == partition_dim_name), None
+        )
+        group_dims = [d for d in dimensions if d.name != partition_dim_name]
+
+        # 4. 构建 partition SELECT 列（内层 + 外层共用别名）
+        if partition_dim:
+            part_cols = self._dimension_select_cols(partition_dim, primary_alias, time_col)
+            partition_select_expr = part_cols[0] if part_cols else f"{primary_alias}.{partition_dim_name}"
+            partition_alias = partition_dim.select_alias
+        else:
+            # partition_dim 不在传入列表中，从 metric.template_params 推断
+            partition_select_expr = f"{primary_alias}.{partition_dim_name} AS {partition_dim_name}"
+            partition_alias = partition_dim_name
+
+        # 5. 构建 group 维度列（内层）
+        inner_dim_cols: List[str] = [partition_select_expr]
+        inner_group_by: List[str] = [partition_alias]
+
+        for d in group_dims:
+            cols = self._dimension_select_cols(d, primary_alias, time_col)
+            inner_dim_cols.extend(cols)
+            # GROUP BY 引用
+            for col in cols:
+                if " AS " in col.upper():
+                    gb_col = col.rsplit(" AS ", 1)[-1].strip()
+                elif "." in col:
+                    gb_col = col.strip()
+                else:
+                    gb_col = col.strip()
+                inner_group_by.append(gb_col)
+
+        # 6. 指标表达式
+        metric_expr = self._resolve_metric_expr(metric, primary_alias)
+        metric_name = metric.name
+
+        # 7. WHERE 子句
+        where_clauses = self._build_where(task.filters, time_col, time_range, primary_alias)
+
+        # 8. 拼装 JOIN 块
+        join_lines = "\n  ".join(
+            f"{j.join_type} {j.table} {j.alias} ON {j.on}" for j in joins
+        )
+
+        # 9. WHERE 块
+        if where_clauses:
+            where_block = "WHERE  " + "\n     AND ".join(where_clauses)
+        else:
+            where_block = ""
+
+        # 10. 内层 SELECT 的最后两列：聚合指标 + 窗口函数
+        inner_metric_col = f"{metric_expr} AS {metric_name}"
+        inner_rn_col = (
+            f"ROW_NUMBER() OVER (\n"
+            f"           PARTITION BY {partition_alias}\n"
+            f"           ORDER BY {metric_expr} {order_dir}\n"
+            f"         ) AS rk"
+        )
+
+        inner_select_parts = inner_dim_cols + [inner_metric_col, inner_rn_col]
+        inner_select_str = ",\n         ".join(inner_select_parts)
+        inner_group_str = ", ".join(inner_group_by)
+
+        # 11. 外层 SELECT：解析所有别名
+        outer_cols: List[str] = []
+        for col in inner_dim_cols:
+            if " AS " in col.upper():
+                outer_cols.append(col.rsplit(" AS ", 1)[-1].strip())
+            elif "." in col:
+                outer_cols.append(col.split(".")[-1].strip())
+            else:
+                outer_cols.append(col.strip())
+        outer_cols.append(metric_name)
+        outer_cols.append("rk")
+        outer_select_str = ", ".join(outer_cols)
+
+        # 12. 拼装完整 SQL
+        lines: List[str] = [f"SELECT {outer_select_str}"]
+        lines.append("FROM (")
+        lines.append(f"  SELECT {inner_select_str}")
+        lines.append(f"  FROM   {primary_table} {primary_alias}")
+        if join_lines:
+            lines.append(f"  {join_lines}")
+        if where_block:
+            lines.append(f"  {where_block}")
+        if inner_group_str:
+            lines.append(f"  GROUP BY {inner_group_str}")
+        lines.append(") _ranked")
+        lines.append(f"WHERE  rk <= {top_n}")
+        lines.append(f"ORDER BY {partition_alias}, rk")
+
+        return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────────────────
     # 内部：渲染 SQL 字符串

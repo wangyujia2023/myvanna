@@ -95,7 +95,8 @@ class DorisVanna(VannaBase):
         except Exception as e:
             logger.warning(f"[DorisVanna] trace 持久化失败: {e}")
 
-    def get_trace_logs(self, n: int = 100) -> List[dict]:
+    def get_trace_logs(self, n: int = 30) -> List[dict]:
+        n = max(1, min(int(n or 30), 30))
         rows = self._vec.execute(
             """
             SELECT trace_id, question, final_sql, status, model_used,

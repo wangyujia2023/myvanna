@@ -1,0 +1,57 @@
+<div class="tab-pane active" id="tab-cube-pane">
+  <div class="cube-admin-shell">
+    <div class="cube-admin-hero">
+      <div>
+        <div class="eyebrow">Semantic Control Plane</div>
+        <h2>Metric Cube 配置中心</h2>
+        <p>维护 Cube 模型、指标、维度、枚举值、关联关系和业务分段。每个实体保存后可立即同步到 Cube 内存。</p>
+      </div>
+      <div class="cube-admin-actions">
+        <button class="btn btn-primary" onclick="syncCubeCache()">同步全部缓存</button>
+        <button class="btn btn-secondary" onclick="collectCubeEnums()">采集枚举值</button>
+      </div>
+    </div>
+
+    <div class="cube-admin-grid">
+      <div class="card glow-card cube-entity-card">
+        <div class="card-header">
+          <span class="card-title">实体表</span>
+          <span class="card-kicker" id="cube-entity-count">—</span>
+        </div>
+        <div class="cube-entity-list" id="cube-entity-list"></div>
+      </div>
+
+      <div class="card glow-card cube-table-card">
+        <div class="card-header">
+          <span class="card-title" id="cube-table-title">请选择实体</span>
+          <span class="card-kicker" id="cube-table-meta">—</span>
+          <button class="btn btn-sm btn-secondary" onclick="loadCubeRows()">刷新</button>
+          <button class="btn btn-sm btn-primary" onclick="newCubeRow()">新增</button>
+          <button class="btn btn-sm btn-secondary" onclick="syncCubeCache()">同步缓存</button>
+        </div>
+        <div class="cube-table-wrap">
+          <table>
+            <thead id="cube-thead"></thead>
+            <tbody id="cube-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card glow-card cube-editor-card">
+        <div class="card-header">
+          <span class="card-title">JSON 编辑器</span>
+          <span class="card-kicker" id="cube-editor-state">未选择</span>
+        </div>
+        <div class="card-body">
+          <textarea class="form-input form-textarea" id="cube-row-json" style="min-height:360px;font-family:var(--mono)"></textarea>
+          <div class="cube-editor-actions">
+            <button class="btn btn-primary" onclick="saveCubeRow()">保存</button>
+            <button class="btn btn-danger" onclick="deleteCubeRow()">删除</button>
+            <button class="btn btn-secondary" onclick="formatCubeJson()">格式化</button>
+          </div>
+          <div class="form-hint" id="cube-admin-msg">修改保存后，点击“同步缓存”即可加载到 Cube 内存。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

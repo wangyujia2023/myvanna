@@ -1,0 +1,409 @@
+<div class="page active" id="page-arch">
+
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+
+    <!-- Header -->
+    <div class="arch-header" style="background:var(--surface);border-bottom:1px solid var(--border);padding:16px 28px;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:16px">
+        <div>
+          <h1 style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:3px">🗺 系统架构图 — Query-to-SQL 完整调用链路</h1>
+          <p style="font-size:12.5px;color:var(--text3)">从自然语言问题到最终 SQL 执行的全流程智能路由，鼠标悬停节点查看详情</p>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:16px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)"><span style="width:10px;height:10px;border-radius:50%;background:var(--blue);display:inline-block"></span>语义路径</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)"><span style="width:10px;height:10px;border-radius:50%;background:var(--yellow);display:inline-block"></span>LLM辅助</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)"><span style="width:10px;height:10px;border-radius:50%;background:var(--red);display:inline-block"></span>降级路径</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)"><span style="width:10px;height:10px;border-radius:50%;background:var(--green);display:inline-block"></span>存储层</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diagram canvas -->
+    <div style="flex:1;overflow:auto;padding:28px 32px">
+      <div style="min-width:1020px">
+
+        <!-- ① 用户输入 -->
+        <div style="display:flex;justify-content:center;margin-bottom:0">
+          <div class="flow-node node-user" style="min-width:320px">
+            <div class="fn-icon">💬</div>
+            <div class="fn-title">用户自然语言问题</div>
+            <div class="fn-sub">通过 Web UI 或 API 输入<br>支持 SSE 实时流式推送</div>
+            <div class="fn-tags">
+              <span class="fn-tag">POST /ask/semantic/stream</span>
+              <span class="fn-tag">EventSource</span>
+            </div>
+            <div class="fn-detail">
+              <b>入口接口</b><br>
+              · <code>/ask/semantic/stream</code> — 语义路径（SSE）<br>
+              · <code>/ask/stream</code> — Vanna 路径（SSE）<br>
+              · <code>/ask-lc/stream</code> — LangChain 路径（SSE）<br><br>
+              前端通过 EventSource 接收 start / step_start / step_done / sql / error / end 等事件实时渲染调用链路卡片。
+            </div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div style="display:flex;justify-content:center"><div class="flow-arrow arrow-blue" style="height:32px"></div></div>
+
+        <!-- ② Intent Understanding -->
+        <div style="display:flex;justify-content:center;margin-bottom:0">
+          <div class="flow-node node-agent" style="min-width:420px">
+            <div class="fn-icon">🧭</div>
+            <div class="fn-title">① Intent Understanding Agent</div>
+            <div class="fn-sub">
+              调用 Qwen LLM 解析意图，输出结构化 IntentPlan
+            </div>
+            <div class="fn-tags">
+              <span class="fn-tag">intent_type</span>
+              <span class="fn-tag">business_domain</span>
+              <span class="fn-tag">time_hint</span>
+              <span class="fn-tag">entity_hints</span>
+              <span class="fn-tag">compare_type</span>
+            </div>
+            <div class="fn-detail">
+              <b>输出字段</b><br>
+              · <code>intent_type</code>：metric_query / metric_compare / trend / ranking / detail<br>
+              · <code>business_domain</code>：sales / refund / user / product 等<br>
+              · <code>time_hint</code>：解析出的时间范围 / 粒度<br>
+              · <code>entity_hints</code>：提到的实体（大区、渠道、品类）<br>
+              · <code>compare_type</code>：mom / yoy / custom<br><br>
+              <b>实现</b>：<code>vanna_skill/semantic/agents/intent_agent.py</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div style="display:flex;justify-content:center"><div class="flow-arrow arrow-blue" style="height:32px"></div></div>
+
+        <!-- ③ Semantic Parse -->
+        <div style="display:flex;justify-content:center;margin-bottom:0">
+          <div class="flow-node node-agent" style="min-width:520px">
+            <div class="fn-icon">🧬</div>
+            <div class="fn-title">② Semantic Parse Agent</div>
+            <div class="fn-sub">三步召回：同义词索引 → 模糊匹配候选 → Qwen LLM 精确映射</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px;text-align:left">
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+                <div style="font-size:10.5px;font-weight:700;color:var(--text3);margin-bottom:4px">STEP 1 召回</div>
+                <div style="font-size:11.5px;color:var(--text2)">synonym_index<br>模糊匹配 Top-20<br>指标 + 维度候选</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+                <div style="font-size:10.5px;font-weight:700;color:var(--text3);margin-bottom:4px">STEP 2 LLM</div>
+                <div style="font-size:11.5px;color:var(--text2)">Qwen 从候选中<br>精确选取指标 / 维度<br>输出 SemanticPlan</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+                <div style="font-size:10.5px;font-weight:700;color:var(--text3);margin-bottom:4px">STEP 3 评分</div>
+                <div style="font-size:11.5px;color:var(--text2)">计算 Coverage Score<br>(命中数 / 总请求数)<br>决定后续路由</div>
+              </div>
+            </div>
+            <div class="fn-detail">
+              <b>SemanticPlan 输出</b><br>
+              · <code>metrics[]</code>：匹配的指标名称列表<br>
+              · <code>dimensions[]</code>：匹配的维度名称列表<br>
+              · <code>filters[]</code>：解析出的过滤条件<br>
+              · <code>order_by</code>、<code>limit</code><br>
+              · <code>coverage_score</code> = 命中数 / (指标数+维度数)<br>
+              · <code>unresolved_parts[]</code>：未能识别的部分<br><br>
+              <b>实现</b>：<code>vanna_skill/semantic/agents/semantic_parse_agent.py</code><br>
+              <b>Catalog</b>：<code>vanna_skill/semantic/catalog.py</code>（进程级单例，从 semantic_store 加载）
+            </div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div style="display:flex;justify-content:center"><div class="flow-arrow arrow-blue" style="height:32px"></div></div>
+
+        <!-- Coverage Score 路由框 -->
+        <div style="display:flex;justify-content:center;margin-bottom:0">
+          <div class="flow-node node-route" style="min-width:380px">
+            <div class="fn-icon">⚖️</div>
+            <div class="fn-title">Coverage Score 路由</div>
+            <div style="display:flex;gap:10px;justify-content:center;margin-top:10px">
+              <div style="text-align:center">
+                <div style="font-size:18px;font-weight:800;color:var(--green)">≥ 0.8</div>
+                <div style="font-size:10.5px;color:var(--text3)">模板路径</div>
+              </div>
+              <div style="width:1px;background:var(--border);margin:0 4px"></div>
+              <div style="text-align:center">
+                <div style="font-size:18px;font-weight:800;color:var(--yellow)">0.5–0.8</div>
+                <div style="font-size:10.5px;color:var(--text3)">LLM 辅助</div>
+              </div>
+              <div style="width:1px;background:var(--border);margin:0 4px"></div>
+              <div style="text-align:center">
+                <div style="font-size:18px;font-weight:800;color:var(--red)">< 0.5</div>
+                <div style="font-size:10.5px;color:var(--text3)">降级回退</div>
+              </div>
+            </div>
+            <div class="fn-detail">
+              <b>Coverage Score 计算</b><br>
+              <code>score = (指标命中数 + 维度命中数) / 请求总数</code><br><br>
+              · <b>≥ 0.8</b>：全部命中，走确定性模板 SQL，无需 LLM<br>
+              · <b>0.5-0.8</b>：部分命中，语义上下文注入 LLM 辅助生成<br>
+              · <b>< 0.5</b>：未能识别，降级到 LangChain 向量检索路径<br><br>
+              <b>注意</b>：当前评分仅检查 catalog 存在性，尚未校验 metric-dimension 兼容矩阵。
+            </div>
+          </div>
+        </div>
+
+        <!-- 三路分支 -->
+        <div style="position:relative;display:flex;align-items:flex-start;justify-content:center;margin-top:0">
+
+          <!-- 连线横条 -->
+          <div style="position:absolute;top:28px;left:calc(50% - 280px);width:560px;height:2px;background:var(--border)"></div>
+
+          <!-- 左 Branch: 高覆盖 -->
+          <div style="display:flex;flex-direction:column;align-items:center;flex:1;padding:0 8px">
+            <div style="height:28px;width:2px;background:var(--green);margin:0 auto"></div>
+            <div style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#3fb95020;color:var(--green);border:1px solid #3fb95040;margin-bottom:10px">高覆盖 ≥ 0.8</div>
+            <!-- Query Plan Agent -->
+            <div class="flow-node node-agent" style="width:100%;max-width:260px">
+              <div class="fn-icon">📐</div>
+              <div class="fn-title">③ Query Plan Agent</div>
+              <div class="fn-sub">构建查询 DAG<br>解析 filters / order / limit</div>
+              <div class="fn-detail">
+                <b>输出 QueryPlan</b><br>
+                · <code>tasks[]</code>：QueryTask 列表（当前通常为 1 个）<br>
+                · 每个 task 包含：metrics、dimensions、filters、order_by、limit<br>
+                · 支持未来扩展为多 task DAG（跨事实表查询分拆）<br><br>
+                <b>实现</b>：<code>vanna_skill/semantic/agents/query_plan_agent.py</code>
+              </div>
+            </div>
+            <div class="flow-arrow" style="height:20px"></div>
+            <!-- SQL Synthesizer -->
+            <div class="flow-node node-sql" style="width:100%;max-width:260px">
+              <div class="fn-icon">⚙️</div>
+              <div class="fn-title">SQL Synthesizer</div>
+              <div class="fn-sub">无 LLM 确定性模板合成<br>{alias} 占位符替换</div>
+              <div class="fn-tags">
+                <span class="fn-tag">SELECT</span>
+                <span class="fn-tag">FROM + JOIN</span>
+                <span class="fn-tag">WHERE / GROUP BY</span>
+              </div>
+              <div class="fn-detail">
+                <b>合成步骤</b><br>
+                1. 从第一个 MetricDef 取主表 + 别名<br>
+                2. 收集 extra_joins + dimension.join，去重<br>
+                3. 替换 {alias} / {fact_alias} / {time_col} 占位符<br>
+                4. 构建 SELECT（维度 + 指标聚合表达式）<br>
+                5. 构建 WHERE（时间范围优先 + filters）<br>
+                6. 构建 GROUP BY / ORDER BY / LIMIT<br><br>
+                <b>实现</b>：<code>vanna_skill/semantic/sql_synthesizer.py</code><br>
+                <b>方言</b>：Apache Doris（预留 MySQL 扩展点）
+              </div>
+            </div>
+          </div>
+
+          <!-- 中 Branch: 中覆盖 -->
+          <div style="display:flex;flex-direction:column;align-items:center;flex:1;padding:0 8px">
+            <div style="height:28px;width:2px;background:var(--yellow);margin:0 auto"></div>
+            <div style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#d2992220;color:var(--yellow);border:1px solid #d2992240;margin-bottom:10px">中覆盖 0.5–0.8</div>
+            <div class="flow-node node-agent" style="width:100%;max-width:260px">
+              <div class="fn-icon">🤖</div>
+              <div class="fn-title">SQL Generator Agent</div>
+              <div class="fn-sub">语义上下文注入 Qwen<br>LLM 辅助生成 SQL</div>
+              <div class="fn-tags">
+                <span class="fn-tag">MetricDef 注入</span>
+                <span class="fn-tag">DimensionDef 注入</span>
+                <span class="fn-tag">Schema 约束</span>
+              </div>
+              <div class="fn-detail">
+                <b>Prompt 注入内容</b><br>
+                · 匹配到的 MetricDef（表达式、主表、JOIN）<br>
+                · 匹配到的 DimensionDef（表达式、JOIN 条件）<br>
+                · FilterCondition 列表<br>
+                · 业务数据库 Schema 片段（相关表的 CREATE TABLE）<br><br>
+                LLM 基于语义上下文生成 SQL，比纯 LangChain 路径更准确，比模板路径更灵活，适合部分命中场景。<br><br>
+                <b>实现</b>：<code>vanna_skill/semantic/agents/sql_generator_agent.py</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右 Branch: 低覆盖 降级 -->
+          <div style="display:flex;flex-direction:column;align-items:center;flex:1;padding:0 8px">
+            <div style="height:28px;width:2px;background:var(--red);margin:0 auto"></div>
+            <div style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#f8514920;color:var(--red);border:1px solid #f8514940;margin-bottom:10px">低覆盖 &lt; 0.5</div>
+            <div class="flow-node node-agent" style="width:100%;max-width:260px;border-color:#f8514960">
+              <div class="fn-icon">🔄</div>
+              <div class="fn-title">LangChain Fallback</div>
+              <div class="fn-sub">向量相似度召回<br>Few-shot SQL 生成</div>
+              <div class="fn-tags">
+                <span class="fn-tag">向量检索</span>
+                <span class="fn-tag">SQL 示例</span>
+                <span class="fn-tag">文档召回</span>
+              </div>
+              <div class="fn-detail">
+                <b>降级流程</b><br>
+                1. 对用户问题做 Embedding（Qwen text-embedding-v3）<br>
+                2. 在 vanna_store.vanna_collection 中做向量相似度召回<br>
+                3. 取 Top-N SQL 示例 + Schema + Docs 组装 Few-shot Prompt<br>
+                4. Qwen LLM 生成最终 SQL<br><br>
+                <b>注意</b>：此路径完全绕过 semantic_store，依赖 vanna_store 中的训练数据质量。<br><br>
+                <b>实现</b>：<code>vanna_skill/pipelines/ask_lc_pipeline.py</code>
+              </div>
+            </div>
+            <!-- 辅助存储 -->
+            <div class="flow-arrow" style="height:20px"></div>
+            <div class="flow-node node-store" style="width:100%;max-width:260px">
+              <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">🗄️ vanna_store</div>
+              <div style="font-size:11.5px;color:var(--text3);line-height:1.7">
+                vanna_collection<br>SQL 示例 · 文档 · Schema<br>ChromaDB 向量存储
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 汇合线 -->
+        <div style="position:relative;display:flex;align-items:flex-start;justify-content:center;margin-top:16px">
+          <div style="position:absolute;top:0;left:calc(50% - 280px);width:560px;height:2px;background:var(--border)"></div>
+        </div>
+
+        <!-- arrow -->
+        <div style="display:flex;justify-content:center;margin-top:2px">
+          <div class="flow-arrow" style="height:28px"></div>
+        </div>
+
+        <!-- ④ SQL Guard -->
+        <div style="display:flex;justify-content:center;margin-bottom:0">
+          <div class="flow-node node-guard" style="min-width:420px">
+            <div class="fn-icon">🛡️</div>
+            <div class="fn-title">④ SQL Guard 校验</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px">
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;text-align:center">
+                <div style="font-size:18px">📝</div>
+                <div style="font-size:10.5px;color:var(--text3);margin-top:3px">语法<br>校验</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;text-align:center">
+                <div style="font-size:18px">🚫</div>
+                <div style="font-size:10.5px;color:var(--text3);margin-top:3px">危险操作<br>拦截</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;text-align:center">
+                <div style="font-size:18px">🔒</div>
+                <div style="font-size:10.5px;color:var(--text3);margin-top:3px">权限<br>过滤</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;text-align:center">
+                <div style="font-size:18px">✨</div>
+                <div style="font-size:10.5px;color:var(--text3);margin-top:3px">格式<br>整理</div>
+              </div>
+            </div>
+            <div class="fn-detail">
+              <b>校验规则</b><br>
+              · 拦截 DROP / DELETE / INSERT / UPDATE / TRUNCATE<br>
+              · 拦截系统表访问（information_schema 白名单）<br>
+              · 检查 SELECT 语法基本格式<br>
+              · 注入 region_scope 权限过滤（如 华东大区限制）<br>
+              · SQL 格式化（关键字大写、缩进对齐）<br><br>
+              Guard 失败时直接返回错误，不执行数据库查询。<br><br>
+              <b>实现</b>：<code>vanna_skill/semantic/agents/sql_guard_agent.py</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div style="display:flex;justify-content:center"><div class="flow-arrow arrow-blue" style="height:28px"></div></div>
+
+        <!-- ⑤ Doris 执行 -->
+        <div style="display:flex;justify-content:center;margin-bottom:0">
+          <div class="flow-node node-db" style="min-width:420px">
+            <div class="fn-icon">🗄️</div>
+            <div class="fn-title">⑤ Apache Doris 执行</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px">
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;text-align:center">
+                <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:3px">retail_dw</div>
+                <div style="font-size:11px;color:var(--text2)">业务数据库<br>dwd / dws / ads 层</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;text-align:center">
+                <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:3px">semantic_store</div>
+                <div style="font-size:11px;color:var(--text2)">语义定义库<br>指标·维度·实体</div>
+              </div>
+              <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;text-align:center">
+                <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:3px">vanna_store</div>
+                <div style="font-size:11px;color:var(--text2)">向量知识库<br>SQL示例·文档</div>
+              </div>
+            </div>
+            <div class="fn-detail">
+              <b>连接方式</b>：PyMySQL over MySQL Protocol（Port 19030）<br><br>
+              <b>retail_dw 分层</b><br>
+              · ODS：原始数据（dod_trade_order_*）<br>
+              · DWD：明细事实表（dwd_trade_*_fact）<br>
+              · DWS：汇总宽表（dws_*_daily）<br>
+              · ADS：应用层（ads_retail_metric_summary）<br><br>
+              <b>实现</b>：<code>vanna_skill/doris_client.py</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div style="display:flex;justify-content:center"><div class="flow-arrow arrow-blue" style="height:28px"></div></div>
+
+        <!-- ⑥ 结果 + Trace -->
+        <div style="display:flex;justify-content:center;gap:16px;margin-bottom:0">
+
+          <div class="flow-node node-result" style="min-width:260px">
+            <div class="fn-icon">📊</div>
+            <div class="fn-title">⑥ 结果返回</div>
+            <div class="fn-sub">DataFrame → JSON<br>SSE result 事件推送前端</div>
+            <div class="fn-tags">
+              <span class="fn-tag">rows[]</span>
+              <span class="fn-tag">columns[]</span>
+              <span class="fn-tag">elapsed_ms</span>
+            </div>
+            <div class="fn-detail">
+              前端收到 <code>result</code> 事件后渲染：<br>
+              · SQL 代码卡片（Prism 语法高亮）<br>
+              · 执行结果表格<br>
+              · 反馈按钮（👍 正确 / ✏️ 修正）<br><br>
+              点击"正确"会将 question-SQL 对写入 vanna_store，持续增强知识库。
+            </div>
+          </div>
+
+          <div class="flow-node node-result" style="min-width:260px">
+            <div class="fn-icon">📡</div>
+            <div class="fn-title">Trace 写入</div>
+            <div class="fn-sub">每步 step 写入 vanna_store<br>支持调用审计 & 回溯</div>
+            <div class="fn-tags">
+              <span class="fn-tag">trace_id</span>
+              <span class="fn-tag">step_name</span>
+              <span class="fn-tag">elapsed_ms</span>
+            </div>
+            <div class="fn-detail">
+              每个 Agent Step 执行完成后写入 Trace 记录：<br>
+              · trace_id（全局唯一，UUID）<br>
+              · step_name / step_label / status<br>
+              · input / output（JSON）<br>
+              · elapsed_ms<br><br>
+              在"查询审计"页面可按 trace_id 回溯完整链路，用于排查生成错误和效果分析。<br><br>
+              <b>实现</b>：<code>vanna_skill/tracer.py</code>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Semantic Store 辅助展示 -->
+        <div style="margin-top:32px;border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:16px 20px">
+          <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:12px">🧬 Semantic Store — 语义层数据来源</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px">MetricDef</div>
+              <div style="font-size:11.5px;color:var(--text3);line-height:1.7">name · label<br>expression<br>primary_table/alias<br>time_column<br>extra_joins[]<br>compatible_dims[]</div>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:700;color:var(--purple);margin-bottom:6px">DimensionDef</div>
+              <div style="font-size:11.5px;color:var(--text3);line-height:1.7">name · dim_type<br>time/attribute/entity_ref<br>expression<br>join.table/on<br>select_fields[]<br>grain</div>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:6px">EntityDef</div>
+              <div style="font-size:11.5px;color:var(--text3);line-height:1.7">name · entity_type<br>primary_table<br>primary_key<br>display_key<br>searchable_fields[]</div>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:6px">BusinessDef</div>
+              <div style="font-size:11.5px;color:var(--text3);line-height:1.7">name · label<br>related_metrics[]<br>related_dimensions[]<br>typical_questions[]<br>default_dimensions[]</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--text3)">
+            数据来源：DB 主（semantic_store 4张表） → YAML 副（catalog_yaml/*.yaml） · 可通过 SchemaScanner 从 information_schema + audit_log 自动发现初始化 · 支持 UI 手动维护
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
