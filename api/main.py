@@ -27,7 +27,10 @@ from vanna_skill.semantic.semantic_sql_rag import SemanticSQLRAGStore
 from vanna_skill.semantic.catalog import invalidate_semantic_cache
 from vanna_skill.semantic.schema_scanner import SchemaScanner
 from vanna_skill.cube.service import CubeFilter, CubeQuery
+from vanna_skill.cube.validator import CubeConfigValidator
 from vanna_skill.core.security import assert_readonly_sql
+from vanna_skill.rca import RCAService
+from vanna_skill.rca.smart_pipeline import SmartRCAPipeline
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s  %(message)s")
@@ -48,6 +51,9 @@ _prompt_store: Optional[PromptStore] = None
 _cube_service: Optional[CubeService] = None
 _cube_pipeline: Optional[CubePipeline] = None
 _cube_admin_client: Optional[DorisClient] = None
+_cube_validator: Optional[CubeConfigValidator] = None
+_rca_service: Optional[RCAService] = None
+_smart_rca_pipeline: Optional[SmartRCAPipeline] = None
 
 
 CUBE_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
@@ -98,6 +104,32 @@ CUBE_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
         "pk": "version_id",
         "order": "version_no DESC, updated_at DESC",
         "fields": ["version_id", "version_no", "checksum", "status", "remark"],
+    },
+    "validation-results": {
+        "table": "cube_validation_results",
+        "pk": "validation_id",
+        "order": "created_at DESC",
+        "fields": ["validation_id", "run_id", "severity", "entity_type", "entity_name", "rule_code", "message", "detail"],
+        "timestamp": "created_at",
+    },
+    "regression-cases": {
+        "table": "cube_regression_cases",
+        "pk": "case_id",
+        "order": "updated_at DESC",
+        "fields": ["case_id", "question", "expected_sql", "expected_metrics_json", "expected_dimensions_json", "expected_filters_json", "tags_json", "status", "last_run_status", "last_run_detail"],
+    },
+    "publish-history": {
+        "table": "cube_publish_history",
+        "pk": "publish_id",
+        "order": "created_at DESC",
+        "fields": ["publish_id", "version_no", "checksum", "operator", "status", "validation_run_id", "remark"],
+        "timestamp": "created_at",
+    },
+    "metric-influences": {
+        "table": "cube_metric_influences",
+        "pk": "influence_id",
+        "order": "target_metric, source_metric",
+        "fields": ["influence_id", "source_metric", "target_metric", "relation_type", "weight", "direction", "description", "visible"],
     },
 }
 
@@ -173,6 +205,27 @@ def get_cube_admin_client() -> DorisClient:
             database=CONFIG.get("cube_store_database", "cube_store"),
         )
     return _cube_admin_client
+
+
+def get_cube_validator() -> CubeConfigValidator:
+    global _cube_validator
+    if _cube_validator is None:
+        _cube_validator = CubeConfigValidator(get_cube_admin_client(), get_cube_service())
+    return _cube_validator
+
+
+def get_rca_service() -> RCAService:
+    global _rca_service
+    if _rca_service is None:
+        _rca_service = RCAService(CONFIG.copy(), get_cube_service())
+    return _rca_service
+
+
+def get_smart_rca_pipeline() -> SmartRCAPipeline:
+    global _smart_rca_pipeline
+    if _smart_rca_pipeline is None:
+        _smart_rca_pipeline = SmartRCAPipeline(CONFIG.copy(), get_cube_service(), get_rca_service())
+    return _smart_rca_pipeline
 
 
 def _cube_entity_meta(entity: str) -> dict[str, Any]:
@@ -383,6 +436,29 @@ class CubeEnumCollectRequest(BaseModel):
     max_cardinality: int = 500
 
 
+class CubeValidateRequest(BaseModel):
+    explain_sql: bool = False
+    persist: bool = True
+
+
+class RCAFilterRequest(BaseModel):
+    member: str
+    operator: str = "equals"
+    values: list[Any] = Field(default_factory=list)
+
+
+class RCAAnalyzeRequest(BaseModel):
+    metric: str
+    time_dimension: str = "dt"
+    current_start: str
+    current_end: str
+    baseline_start: str
+    baseline_end: str
+    dimensions: list[str] = Field(default_factory=list)
+    filters: list[RCAFilterRequest] = Field(default_factory=list)
+    limit: int = 20
+
+
 @app.get("/health")
 def health():
     stats = _vanna.gemini_stats if _vanna is not None else {}
@@ -468,6 +544,27 @@ def ask_cube_stream(q: str = Query(..., description="自然语言问题")):
     )
 
 
+@app.get("/rca/smart/stream")
+def smart_rca_stream(q: str = Query(..., description="归因分析问题")):
+    def event_generator():
+        for event_type, data in get_smart_rca_pipeline().stream(q):
+            if event_type == "keepalive":
+                yield ": keepalive\n\n"
+                continue
+            payload = json.dumps(data, ensure_ascii=False)
+            yield f"event: {event_type}\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @app.get("/cube/model/version")
 def cube_model_version():
     try:
@@ -534,7 +631,8 @@ def cube_admin_entities():
 def cube_admin_list(entity: str, limit: int = 300):
     meta = _cube_entity_meta(entity)
     limit = max(1, min(int(limit or 300), 1000))
-    fields = ", ".join(meta["fields"] + ["updated_at"])
+    timestamp_field = meta.get("timestamp", "updated_at")
+    fields = ", ".join(meta["fields"] + [timestamp_field])
     rows = get_cube_admin_client().execute(
         f"""
         SELECT {fields}
@@ -668,6 +766,62 @@ def cube_collect_dimension_values(req: CubeEnumCollectRequest):
         "skipped": skipped,
         "model": manifest,
     }
+
+
+@app.post("/cube/validate")
+def cube_validate(req: CubeValidateRequest):
+    try:
+        return get_cube_validator().validate(
+            persist=req.persist,
+            explain_sql=req.explain_sql,
+        )
+    except Exception as e:
+        logger.exception(f"[cube/validate] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/cube/validate/latest")
+def cube_validate_latest(limit: int = 200):
+    try:
+        return get_cube_validator().latest(limit=limit)
+    except Exception as e:
+        logger.exception(f"[cube/validate/latest] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/rca/options")
+def rca_options():
+    try:
+        return get_rca_service().options()
+    except Exception as e:
+        logger.exception(f"[rca/options] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/rca/analyze")
+def rca_analyze(req: RCAAnalyzeRequest):
+    try:
+        from vanna_skill.rca.service import RCARequest
+
+        return get_rca_service().analyze(
+            RCARequest(
+                metric=req.metric,
+                time_dimension=req.time_dimension,
+                current_start=req.current_start,
+                current_end=req.current_end,
+                baseline_start=req.baseline_start,
+                baseline_end=req.baseline_end,
+                dimensions=req.dimensions,
+                filters=[
+                    CubeFilter(member=item.member, operator=item.operator, values=item.values)
+                    for item in req.filters
+                ],
+                limit=req.limit,
+            )
+        )
+    except Exception as e:
+        logger.exception(f"[rca/analyze] 失败: {e}")
+        raise HTTPException(500, str(e))
 
 
 @app.post("/execute")
@@ -937,7 +1091,7 @@ def get_config():
 
 @app.post("/config")
 def update_config(req: ConfigRequest):
-    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store, _cube_service, _cube_pipeline, _cube_admin_client
+    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store, _cube_service, _cube_pipeline, _cube_admin_client, _cube_validator, _rca_service, _smart_rca_pipeline
     qwen_api_key = req.qwen_api_key.strip()
     updated = CONFIG.copy()
     updated.update({
@@ -963,6 +1117,9 @@ def update_config(req: ConfigRequest):
     _cube_service = None
     _cube_pipeline = None
     _cube_admin_client = None
+    _cube_validator = None
+    _rca_service = None
+    _smart_rca_pipeline = None
     invalidate_semantic_cache()
     return {"status": "ok", "message": "配置已更新，连接已重置"}
 

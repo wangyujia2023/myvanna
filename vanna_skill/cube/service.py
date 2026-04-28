@@ -161,16 +161,17 @@ class CubeService:
         required_cubes = {base_cube}
         required_cubes.update(item.cube_name for item in resolved_dimensions)
         required_cubes.update(item.cube_name for item in resolved_segments)
+        model_names = set(models)
         for measure in resolved_measures:
-            required_cubes.update(self._referenced_cubes(measure.sql_expr, measure.cube_name))
+            required_cubes.update(self._referenced_cubes(measure.sql_expr, measure.cube_name, model_names))
         for dim in resolved_dimensions:
-            required_cubes.update(self._referenced_cubes(dim.sql_expr, dim.cube_name))
+            required_cubes.update(self._referenced_cubes(dim.sql_expr, dim.cube_name, model_names))
         for segment in resolved_segments:
-            required_cubes.update(self._referenced_cubes(segment.filter_sql, segment.cube_name))
+            required_cubes.update(self._referenced_cubes(segment.filter_sql, segment.cube_name, model_names))
         for flt in query.filters:
             dim = self._resolve_dimension(dimensions, flt.member)
             required_cubes.add(dim.cube_name)
-            required_cubes.update(self._referenced_cubes(dim.sql_expr, dim.cube_name))
+            required_cubes.update(self._referenced_cubes(dim.sql_expr, dim.cube_name, model_names))
 
         join_sqls = self._resolve_joins(base_cube, required_cubes, joins_by_cube, models)
         select_clauses: List[str] = []
@@ -387,13 +388,25 @@ class CubeService:
         mapping = dimension.enum_mapping or {}
         return mapping.get(str(value), value)
 
-    def _referenced_cubes(self, expr: str, current_cube: str) -> set[str]:
+    def _referenced_cubes(
+        self,
+        expr: str,
+        current_cube: str,
+        known_cubes: Optional[set[str]] = None,
+    ) -> set[str]:
         refs = set()
-        for token in _CUBE_REF_RE.findall(expr or ""):
+        raw = expr or ""
+        for token in _CUBE_REF_RE.findall(raw):
             if token == "CUBE":
                 refs.add(current_cube)
             elif "." in token:
                 refs.add(token.split(".", 1)[0])
+            elif known_cubes and token in known_cubes:
+                refs.add(token)
+        if known_cubes:
+            for cube in known_cubes:
+                if re.search(rf"(?<![A-Za-z0-9_]){re.escape(cube)}\.", raw):
+                    refs.add(cube)
         return refs
 
     def _sql_literal(self, value: Any) -> str:

@@ -1,0 +1,45 @@
+<div class="page active" id="page-smart-rca">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+    <div class="query-top smart-rca-top">
+      <div class="query-input-row">
+        <textarea class="q-textarea" id="smart-rca-question" rows="2"
+          placeholder="描述归因问题，例如：高价值用户流失风险与消费异动深度归因分析"
+          onkeydown="if(event.ctrlKey&&event.key==='Enter')doSmartRca()"></textarea>
+        <div class="query-side">
+          <button class="btn btn-primary" id="btn-smart-rca" onclick="doSmartRca()">▶ 开始归因</button>
+        </div>
+      </div>
+      <div class="suggested-qs" id="smart-rca-suggested">
+        <span style="font-size:12px;color:var(--text3);margin-right:4px">示例：</span>
+      </div>
+    </div>
+
+    <div class="query-body">
+      <div class="chain-panel">
+        <div class="panel-header">
+          <span class="panel-title">📡 Agent 调用链路</span>
+          <div class="trace-meta">
+            <span id="trace-id-display"></span>
+            <span id="trace-time-display"></span>
+          </div>
+        </div>
+        <div class="chain-progress"><div class="chain-progress-bar" id="chain-progress-bar"></div></div>
+        <div class="chain-body" id="chain-body">
+          <div class="empty-state">
+            <div class="empty-icon">⌁</div>
+            <div class="empty-text">发起归因问题后<br>多路 Agent 链路将展示在此</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="result-panel">
+        <div class="result-body" id="smart-rca-result">
+          <div class="empty-state" id="result-empty">
+            <div class="empty-icon">🔍</div>
+            <div class="empty-text">等待归因分析…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

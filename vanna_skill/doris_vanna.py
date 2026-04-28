@@ -210,7 +210,7 @@ class DorisVanna(VannaBase):
 
         vec = self._gemini.get_embedding(question)
         rows = self._vec.execute(f"""
-            SELECT question, content AS sql_text,
+            SELECT question, content AS sql_text, quality_score,
                    cosine_distance(embedding, {json.dumps(vec)}) AS dist
             FROM vanna_store.vanna_embeddings
             WHERE content_type = 'sql'
@@ -224,7 +224,9 @@ class DorisVanna(VannaBase):
         if step:
             step.finish(outputs={
                 "found": len(results),
-                "top_scores": [round(r["dist"], 4) for r in rows[:3]],
+                "top_scores": [round(max(0.0, 1.0 - float(r["dist"] or 0)), 4) for r in rows[:3]],
+                "top_distances": [round(float(r["dist"] or 0), 4) for r in rows[:3]],
+                "quality_scores": [round(float(r.get("quality_score", 0) or 0), 4) for r in rows[:3]],
                 "top_questions": [r["question"][:40] for r in rows[:3]],
             })
 
@@ -873,7 +875,7 @@ class DorisVanna(VannaBase):
             step2 = trace.begin_step("vector_search_sql",
                                      {"top_k": self._n_results})
             rows_sql = self._vec.execute(f"""
-                SELECT question, content AS sql_text,
+                SELECT question, content AS sql_text, quality_score,
                        cosine_distance(embedding, {json.dumps(vec)}) AS dist
                 FROM vanna_store.vanna_embeddings
                 WHERE content_type = 'sql' AND quality_score >= 0.3
@@ -887,7 +889,9 @@ class DorisVanna(VannaBase):
             ]
             step2.finish(outputs={
                 "found": len(sim_sql),
-                "top_scores": [round(r["dist"], 4) for r in rows_sql[:3]],
+                "top_scores": [round(max(0.0, 1.0 - float(r["dist"] or 0)), 4) for r in rows_sql[:3]],
+                "top_distances": [round(float(r["dist"] or 0), 4) for r in rows_sql[:3]],
+                "quality_scores": [round(float(r.get("quality_score", 0) or 0), 4) for r in rows_sql[:3]],
                 "top_questions": [r["question"][:50] for r in rows_sql[:3]],
             })
             notify("step_done", step2.to_dict())

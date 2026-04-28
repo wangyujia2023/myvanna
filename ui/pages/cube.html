@@ -1,0 +1,29 @@
+<div class="page active" id="page-cube">
+  <div class="cube-module-page">
+    <header class="cube-module-topbar">
+      <div class="cube-module-nav" id="cube-module-nav"></div>
+    </header>
+
+    <main class="cube-module-main">
+      <section class="cube-module-hero">
+        <div>
+          <div class="eyebrow" id="cube-module-eyebrow">Control Plane</div>
+          <h1 id="cube-module-title">Metric Cube</h1>
+          <p id="cube-module-desc">模型、指标、维度、枚举、关系、治理和发布能力拆分维护。</p>
+        </div>
+        <div class="cube-hero-actions">
+          <button class="btn btn-primary" onclick="syncCubeCache()">同步缓存</button>
+          <button class="btn btn-secondary" onclick="runCubeValidation(false)">配置校验</button>
+          <button class="btn btn-secondary" onclick="collectCubeEnums()">采集枚举</button>
+        </div>
+      </section>
+
+      <div id="cube-module-container" class="cube-module-container">
+        <div class="empty-state">
+          <div class="empty-icon">⏳</div>
+          <div class="empty-text">Metric Cube 模块加载中…</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>

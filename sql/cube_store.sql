@@ -150,3 +150,68 @@ UNIQUE KEY(version_id)
 COMMENT 'Cube 模型版本表'
 DISTRIBUTED BY HASH(version_id) BUCKETS 1
 PROPERTIES ("replication_num" = "1");
+
+CREATE TABLE IF NOT EXISTS cube_validation_results (
+    validation_id   BIGINT          NOT NULL,
+    run_id          VARCHAR(64)     NOT NULL COMMENT '一次校验运行 ID',
+    severity        VARCHAR(16)     NOT NULL COMMENT 'error/warning/info',
+    entity_type     VARCHAR(64)     NOT NULL COMMENT 'model/measure/dimension/join/segment/template',
+    entity_name     VARCHAR(256)    NOT NULL,
+    rule_code       VARCHAR(128)    NOT NULL,
+    message         VARCHAR(1024)   NOT NULL,
+    detail          TEXT,
+    created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP
+) ENGINE=OLAP
+UNIQUE KEY(validation_id)
+COMMENT 'Metric Cube 配置治理校验结果'
+DISTRIBUTED BY HASH(validation_id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
+CREATE TABLE IF NOT EXISTS cube_regression_cases (
+    case_id         BIGINT          NOT NULL,
+    question        TEXT            NOT NULL,
+    expected_sql    TEXT,
+    expected_metrics_json    TEXT,
+    expected_dimensions_json TEXT,
+    expected_filters_json    TEXT,
+    tags_json       TEXT,
+    status          VARCHAR(32)     DEFAULT 'active',
+    last_run_status VARCHAR(32),
+    last_run_detail TEXT,
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP
+) ENGINE=OLAP
+UNIQUE KEY(case_id)
+COMMENT 'Metric Cube 回归测试用例'
+DISTRIBUTED BY HASH(case_id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
+CREATE TABLE IF NOT EXISTS cube_publish_history (
+    publish_id      BIGINT          NOT NULL,
+    version_no      BIGINT          NOT NULL,
+    checksum        VARCHAR(64),
+    operator        VARCHAR(128),
+    status          VARCHAR(32)     DEFAULT 'published',
+    validation_run_id VARCHAR(64),
+    remark          TEXT,
+    created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP
+) ENGINE=OLAP
+UNIQUE KEY(publish_id)
+COMMENT 'Metric Cube 发布历史'
+DISTRIBUTED BY HASH(publish_id) BUCKETS 2
+PROPERTIES ("replication_num" = "1");
+
+CREATE TABLE IF NOT EXISTS cube_metric_influences (
+    influence_id    BIGINT          NOT NULL,
+    source_metric   VARCHAR(128)    NOT NULL COMMENT '影响方指标',
+    target_metric   VARCHAR(128)    NOT NULL COMMENT '被影响指标',
+    relation_type   VARCHAR(64)     DEFAULT 'driver' COMMENT 'driver/component/proxy/conflict',
+    weight          DOUBLE          DEFAULT 1.0,
+    direction       VARCHAR(16)     DEFAULT 'positive' COMMENT 'positive/negative/unknown',
+    description     TEXT,
+    visible         TINYINT         DEFAULT 1,
+    updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP
+) ENGINE=OLAP
+UNIQUE KEY(influence_id)
+COMMENT '指标影响关系，用于后续归因分析'
+DISTRIBUTED BY HASH(influence_id) BUCKETS 2
+PROPERTIES ("replication_num" = "1");

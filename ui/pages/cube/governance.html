@@ -1,0 +1,34 @@
+<section class="cube-governance-page">
+  <div class="cube-governance-actions">
+    <button class="btn btn-primary" onclick="runCubeValidation(false)">配置校验</button>
+    <button class="btn btn-secondary" onclick="runCubeValidation(true)">校验 + EXPLAIN</button>
+    <button class="btn btn-secondary" onclick="loadCubeValidationLatest()">加载最近结果</button>
+  </div>
+
+  <section class="card glow-card cube-validation-card">
+    <div class="card-header">
+      <span class="card-title">治理体检</span>
+      <span class="card-kicker" id="cube-validation-summary">未运行</span>
+    </div>
+    <div class="cube-validation-body">
+      <div class="cube-validation-metrics" id="cube-validation-metrics">
+        <span class="validation-pill muted">等待校验</span>
+      </div>
+      <div class="cube-validation-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>级别</th>
+              <th>对象</th>
+              <th>规则</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody id="cube-validation-tbody">
+            <tr><td colspan="4" style="color:var(--text3);text-align:center">点击“配置校验”后展示治理问题</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</section>

@@ -44,7 +44,7 @@ cube(`orders`, {
       format: `currency`,
     },
     net_revenue: {
-      sql: `SUM(orders.apportion_amt) - COALESCE(SUM(refunds.refund_amt), 0)`,
+      sql: `SUM({CUBE}.apportion_amt) - COALESCE(SUM({refunds.refund_amt}), 0)`,
       type: `number`,
       title: `净收入`,
       format: `currency`,

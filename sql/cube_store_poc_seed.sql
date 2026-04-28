@@ -14,7 +14,7 @@ VALUES
   (103, 'orders', 'plus_consume_amt', 'PLUS会员消费金额', 'CASE WHEN {users.is_plus_vip} = 1 THEN {CUBE}.apportion_amt ELSE 0 END', 'sum', 'currency', 1, 1),
   (104, 'orders', 'buyer_count', '买家数', 'user_id', 'countDistinct', 'number', 1, 1),
   (105, 'orders', 'aov', '客单价', 'apportion_amt', 'avg', 'currency', 1, 1),
-  (106, 'orders', 'net_revenue', '净收入', 'SUM(orders.apportion_amt) - COALESCE(SUM(refunds.refund_amt), 0)', 'number', 'currency', 1, 1);
+  (106, 'orders', 'net_revenue', '净收入', 'SUM({CUBE}.apportion_amt) - COALESCE(SUM({refunds.refund_amt}), 0)', 'number', 'currency', 1, 1);
 
 INSERT INTO cube_dimensions (dimension_id, cube_name, dimension_name, title, sql_expr, dimension_type, primary_key_flag, enum_mapping_json, visible, version)
 VALUES

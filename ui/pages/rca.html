@@ -1,12 +1,93 @@
 <div class="page active" id="page-rca">
-  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px;color:var(--text3)">
-    <div style="font-size:48px">🔍</div>
-    <div style="font-size:18px;font-weight:700;color:var(--text2)">归因分析</div>
-    <div style="font-size:13px;color:var(--text3);text-align:center;max-width:400px;line-height:1.7">
-      即将上线：基于指标下钻的自动归因分析，定位 GMV / 转化率波动的关键驱动因子。
-    </div>
-    <div style="padding:6px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;font-size:12px;color:var(--text3)">
-      Coming Soon
-    </div>
+  <div class="rca-page">
+    <section class="rca-hero">
+      <div>
+        <div class="eyebrow">Root Cause Analysis</div>
+        <h1>归因分析工作台</h1>
+        <p>基于 Metric Cube 的受控 SQL 生成能力，对指标波动进行当前期 / 对比期拆解，输出维度贡献度、变化率和执行 SQL。</p>
+      </div>
+      <button class="btn btn-primary" onclick="runRcaAnalysis()">开始归因</button>
+    </section>
+
+    <section class="rca-grid">
+      <div class="card glow-card rca-config-card">
+        <div class="card-header">
+          <span class="card-title">分析配置</span>
+          <span class="card-kicker" id="rca-option-state">加载中</span>
+        </div>
+        <div class="card-body rca-form">
+          <label>指标</label>
+          <select class="form-input" id="rca-metric"></select>
+
+          <label>时间维度</label>
+          <select class="form-input" id="rca-time-dim"></select>
+
+          <div class="rca-two-col">
+            <div>
+              <label>当前期开始</label>
+              <input class="form-input" id="rca-current-start" value="2026-04-01">
+            </div>
+            <div>
+              <label>当前期结束</label>
+              <input class="form-input" id="rca-current-end" value="2026-04-30">
+            </div>
+          </div>
+
+          <div class="rca-two-col">
+            <div>
+              <label>对比期开始</label>
+              <input class="form-input" id="rca-baseline-start" value="2026-03-01">
+            </div>
+            <div>
+              <label>对比期结束</label>
+              <input class="form-input" id="rca-baseline-end" value="2026-03-31">
+            </div>
+          </div>
+
+          <label>归因维度（多选）</label>
+          <div class="rca-dim-list" id="rca-dim-list"></div>
+
+          <label>Top N</label>
+          <input class="form-input" id="rca-limit" type="number" value="20" min="1" max="100">
+        </div>
+      </div>
+
+      <div class="rca-result-stack">
+        <div class="card glow-card rca-summary-card">
+          <div class="card-header">
+            <span class="card-title">归因摘要</span>
+            <span class="card-kicker" id="rca-run-state">未运行</span>
+          </div>
+          <div class="card-body">
+            <div class="rca-kpis">
+              <div><span>当前期</span><strong id="rca-current-value">—</strong></div>
+              <div><span>对比期</span><strong id="rca-baseline-value">—</strong></div>
+              <div><span>变化量</span><strong id="rca-delta-value">—</strong></div>
+              <div><span>变化率</span><strong id="rca-rate-value">—</strong></div>
+            </div>
+            <div class="rca-summary-text" id="rca-summary-text">选择指标与维度后点击“开始归因”。</div>
+          </div>
+        </div>
+
+        <div class="card glow-card">
+          <div class="card-header">
+            <span class="card-title">维度贡献</span>
+          </div>
+          <div class="card-body" id="rca-contribution-list">
+            <div class="empty-state small"><div class="empty-text">暂无结果</div></div>
+          </div>
+        </div>
+
+        <div class="card glow-card">
+          <div class="card-header">
+            <span class="card-title">执行 SQL</span>
+            <button class="btn btn-sm btn-secondary" onclick="copyRcaSql()">复制 SQL</button>
+          </div>
+          <div class="card-body">
+            <pre class="rca-sql-box" id="rca-sql-box">-- 暂无 SQL</pre>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </div>

@@ -1,0 +1,48 @@
+<section class="cube-entity-page">
+  <div class="cube-dashboard-strip">
+    <div class="cube-stat-card">
+      <span>当前功能</span>
+      <strong id="cube-table-title">请选择实体</strong>
+    </div>
+    <div class="cube-stat-card">
+      <span>Doris 数据表</span>
+      <strong id="cube-table-meta">—</strong>
+    </div>
+    <div class="cube-stat-card">
+      <span>编辑状态</span>
+      <strong id="cube-editor-state">未选择</strong>
+    </div>
+  </div>
+
+  <section class="cube-editor-layout">
+    <div class="card glow-card cube-table-card">
+      <div class="card-header">
+        <span class="card-title">数据列表</span>
+        <button class="btn btn-sm btn-secondary" onclick="loadCubeRows()">刷新</button>
+        <button class="btn btn-sm btn-primary" onclick="newCubeRow()">新增</button>
+        <button class="btn btn-sm btn-secondary" onclick="syncCubeCache()">同步缓存</button>
+      </div>
+      <div class="cube-table-wrap">
+        <table>
+          <thead id="cube-thead"></thead>
+          <tbody id="cube-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card glow-card cube-editor-card">
+      <div class="card-header">
+        <span class="card-title">JSON 编辑器</span>
+      </div>
+      <div class="card-body">
+        <textarea class="form-input form-textarea" id="cube-row-json"></textarea>
+        <div class="cube-editor-actions">
+          <button class="btn btn-primary" onclick="saveCubeRow()">保存</button>
+          <button class="btn btn-danger" onclick="deleteCubeRow()">删除</button>
+          <button class="btn btn-secondary" onclick="formatCubeJson()">格式化</button>
+        </div>
+        <div class="form-hint" id="cube-admin-msg">修改保存后，点击“同步缓存”即可加载到 Cube 内存。</div>
+      </div>
+    </div>
+  </section>
+</section>

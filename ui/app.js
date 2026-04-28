@@ -85,6 +85,7 @@ const PAGE_TITLES = {
   config:   'Agent 调试台',
   arch:     '系统架构图',
   rca:      '归因分析',
+  'smart-rca': '智能归因',
 };
 
 function activateNav(name){
@@ -106,6 +107,9 @@ async function afterPageLoad(name){
   if(name === 'manage'){
     await showTab(currentManageTab);
   }
+  if(name === 'cube'){
+    await loadCubeAdmin();
+  }
   if(name === 'log'){
     loadLogs();
   }
@@ -114,6 +118,12 @@ async function afterPageLoad(name){
   }
   if(name === 'regression'){
     initRegressionPage();
+  }
+  if(name === 'rca'){
+    initRcaPage();
+  }
+  if(name === 'smart-rca'){
+    initSmartRcaPage();
   }
 }
 
@@ -138,7 +148,7 @@ async function showPage(name){
   }
 
   currentPage = name;
-  if(currentSSE && name !== 'query'){
+  if(currentSSE && !['query','smart-rca'].includes(name)){
     currentSSE.close();
     currentSSE = null;
   }
@@ -162,7 +172,6 @@ async function showTab(name){
     await showPage('manage');
     return;
   }
-  if(name === 'cube') activateNav('cube');
   if(name === 'semantic') activateNav('semantic');
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('tab-'+name)?.classList.add('active');
@@ -179,7 +188,6 @@ async function showTab(name){
   if(name==='prompt') loadPromptLab();
   if(name==='regression') initRegressionPage();
   if(name==='semantic') loadSemanticList();
-  if(name==='cube') loadCubeAdmin();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -257,39 +265,132 @@ const CUBE_ENTITY_LABELS = {
   segments: '业务分段',
   templates: 'SQL 模板',
   versions: '模型版本',
+  'validation-results': '校验结果',
+  'regression-cases': '回归用例',
+  'publish-history': '发布历史',
+  'metric-influences': '指标影响',
 };
+const CUBE_MODULES = [
+  {id:'overview', title:'模块首页', desc:'查看 Metric Cube 的治理对象和快捷入口。', icon:'⌁', kind:'overview'},
+  {id:'models', title:'模型管理', desc:'维护 Cube 到 Doris 物理表或 SQL 表达式的映射。', icon:'▣', kind:'entity', entity:'models'},
+  {id:'measures', title:'指标管理', desc:'维护 GMV、客单价、净收入等业务指标口径。', icon:'Σ', kind:'entity', entity:'measures'},
+  {id:'dimensions', title:'维度管理', desc:'维护城市、会员、类目、时间等分析维度。', icon:'◇', kind:'entity', entity:'dimensions'},
+  {id:'dimension-values', title:'枚举值管理', desc:'维护枚举值、同义词和自动采集结果，用于自然语言参数识别。', icon:'≋', kind:'entity', entity:'dimension-values'},
+  {id:'joins', title:'关系管理', desc:'维护 Cube 之间的 Join 关系，保证多表查询可控。', icon:'↔', kind:'entity', entity:'joins'},
+  {id:'segments', title:'业务分段', desc:'维护 PLUS 会员、有效订单等可复用过滤片段。', icon:'◐', kind:'entity', entity:'segments'},
+  {id:'templates', title:'SQL 模板', desc:'维护通用 SQL 片段、业务模板和参数定义。', icon:'▤', kind:'entity', entity:'templates'},
+  {id:'versions', title:'版本管理', desc:'查看模型版本和激活状态。', icon:'⑂', kind:'entity', entity:'versions'},
+  {id:'governance', title:'治理体检', desc:'校验模型完整性、表达式、Join、枚举和 Doris EXPLAIN。', icon:'✓', kind:'governance'},
+  {id:'regression-cases', title:'回归用例', desc:'维护智能问数回归问题和期望结果。', icon:'🧪', kind:'entity', entity:'regression-cases'},
+  {id:'publish-history', title:'发布历史', desc:'记录发布批次、校验运行和模型 checksum。', icon:'↑', kind:'entity', entity:'publish-history'},
+  {id:'metric-influences', title:'指标影响', desc:'维护指标之间的影响关系，为归因分析打底。', icon:'⛓', kind:'entity', entity:'metric-influences'},
+];
 let cubeEntities = [];
+let currentCubeModule = 'overview';
+let openCubeMenuGroup = '';
 let currentCubeEntity = 'models';
 let currentCubeMeta = null;
 let currentCubeRows = [];
 let currentCubeRow = null;
 
 async function loadCubeAdmin(){
-  const listEl = document.getElementById('cube-entity-list');
-  if(!listEl) return;
+  const navEl = document.getElementById('cube-module-nav');
+  if(!navEl) return;
   try{
     const res = await apiFetch('/cube/admin/entities');
     cubeEntities = res.entities || [];
-    document.getElementById('cube-entity-count').textContent = `${cubeEntities.length} 张表`;
-    listEl.innerHTML = cubeEntities.map(e => `
-      <button class="cube-entity-btn ${e.name===currentCubeEntity?'active':''}" onclick="selectCubeEntity('${e.name}')">
-        <span>${esc(CUBE_ENTITY_LABELS[e.name] || e.name)}</span>
-        <code>${esc(e.table)}</code>
-      </button>
-    `).join('');
-    if(!cubeEntities.some(e=>e.name===currentCubeEntity)) currentCubeEntity = cubeEntities[0]?.name || 'models';
-    await loadCubeRows();
+    renderCubeModuleNav();
+    await showCubeModule(currentCubeModule || 'overview');
   }catch(e){
-    listEl.innerHTML = `<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;
+    navEl.innerHTML = `<div style="padding:16px;color:var(--red)">${esc(e.message)}</div>`;
   }
 }
 
-async function selectCubeEntity(entity){
-  currentCubeEntity = entity;
+function renderCubeModuleNav(){
+  const navEl = document.getElementById('cube-module-nav');
+  if(!navEl) return;
+  const entitySet = new Set(cubeEntities.map(e => e.name));
+  const groups = [
+    {title:'总览', ids:['overview']},
+    {title:'模型配置', ids:['models','joins','segments']},
+    {title:'指标口径', ids:['measures','dimensions','dimension-values']},
+    {title:'模板版本', ids:['templates','versions']},
+    {title:'治理闭环', ids:['governance','regression-cases','publish-history','metric-influences']},
+  ];
+  navEl.innerHTML = groups.map(group => {
+    const isOpen = openCubeMenuGroup === group.title;
+    const buttons = group.ids.map(id => CUBE_MODULES.find(m => m.id === id)).filter(Boolean).filter(m => !m.entity || entitySet.has(m.entity)).map(m => `
+        <button class="cube-module-btn ${m.id===currentCubeModule?'active':''}" onclick="showCubeModule('${m.id}')">
+          <span class="cube-module-icon">${esc(m.icon)}</span>
+          <span>
+            <strong>${esc(m.title)}</strong>
+            <small>${esc(m.entity ? CUBE_ENTITY_LABELS[m.entity] || m.entity : m.kind)}</small>
+          </span>
+        </button>
+      `).join('');
+    if(!buttons) return '';
+    return `
+      <div class="cube-module-group ${isOpen ? 'open' : ''}">
+        <button class="cube-module-title" onclick="toggleCubeMenuGroup('${esc(group.title)}')">
+          <span>${esc(group.title)}</span>
+          <em>${isOpen ? '收起' : '展开'}</em>
+        </button>
+        <div class="cube-module-items">${buttons}</div>
+      </div>
+    `;
+    }).join('');
+}
+
+function toggleCubeMenuGroup(title){
+  openCubeMenuGroup = openCubeMenuGroup === title ? '' : title;
+  renderCubeModuleNav();
+}
+
+function toggleCubeMenuAll(){
+  openCubeMenuGroup = openCubeMenuGroup ? '' : '模型配置';
+  renderCubeModuleNav();
+}
+
+async function showCubeModule(moduleId){
+  const module = CUBE_MODULES.find(item => item.id === moduleId) || CUBE_MODULES[0];
+  currentCubeModule = module.id;
+  if(module.entity) currentCubeEntity = module.entity;
   currentCubeRow = null;
-  document.querySelectorAll('.cube-entity-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`.cube-entity-btn[onclick="selectCubeEntity('${entity}')"]`)?.classList.add('active');
+  renderCubeModuleNav();
+  const titleEl = document.getElementById('cube-module-title');
+  const descEl = document.getElementById('cube-module-desc');
+  const eyebrowEl = document.getElementById('cube-module-eyebrow');
+  if(titleEl) titleEl.textContent = module.title;
+  if(descEl) descEl.textContent = module.desc;
+  if(eyebrowEl) eyebrowEl.textContent = module.kind === 'entity' ? 'Doris-backed Configuration' : 'Metric Cube Control Plane';
+  const container = document.getElementById('cube-module-container');
+  if(!container) return;
+  container.innerHTML = `<div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">加载 ${esc(module.title)}…</div></div>`;
+  if(module.kind === 'overview'){
+    container.innerHTML = await loadHtmlFragment('/ui/pages/cube/overview.html', tabCache);
+    renderCubeOverview();
+    return;
+  }
+  if(module.kind === 'governance'){
+    container.innerHTML = await loadHtmlFragment('/ui/pages/cube/governance.html', tabCache);
+    await loadCubeValidationLatest();
+    return;
+  }
+  container.innerHTML = await loadHtmlFragment('/ui/pages/cube/entity.html', tabCache);
   await loadCubeRows();
+}
+
+function renderCubeOverview(){
+  const grid = document.getElementById('cube-overview-grid');
+  if(!grid) return;
+  const entitySet = new Set(cubeEntities.map(e => e.name));
+  grid.innerHTML = CUBE_MODULES.filter(m => m.id !== 'overview' && (!m.entity || entitySet.has(m.entity))).map(m => `
+    <button class="cube-overview-card" onclick="showCubeModule('${m.id}')">
+      <span class="cube-overview-icon">${esc(m.icon)}</span>
+      <strong>${esc(m.title)}</strong>
+      <small>${esc(m.desc)}</small>
+    </button>
+  `).join('');
 }
 
 async function loadCubeRows(){
@@ -388,9 +489,326 @@ async function collectCubeEnums(){
       body:JSON.stringify({max_values:200, max_cardinality:500})
     });
     toast(`枚举采集完成：${res.inserted || 0} 条`);
-    currentCubeEntity = 'dimension-values';
-    await loadCubeAdmin();
+    await showCubeModule('dimension-values');
   }catch(e){ toast('枚举采集失败: '+e.message, 'error'); }
+}
+
+async function runCubeValidation(explainSql=false){
+  if(!document.getElementById('cube-validation-tbody') && document.getElementById('cube-module-container')){
+    await showCubeModule('governance');
+  }
+  const summaryEl = document.getElementById('cube-validation-summary');
+  const tbody = document.getElementById('cube-validation-tbody');
+  if(summaryEl) summaryEl.textContent = explainSql ? 'EXPLAIN 校验中…' : '校验中…';
+  if(tbody) tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3);text-align:center">正在扫描 Cube 配置…</td></tr>';
+  try{
+    const res = await apiFetch('/cube/validate', {
+      method:'POST',
+      body:JSON.stringify({explain_sql:!!explainSql, persist:true})
+    });
+    renderCubeValidation(res);
+    toast(res.status === 'ok' ? 'Cube 配置校验通过' : 'Cube 配置存在治理问题', res.status === 'ok' ? 'success' : 'error');
+  }catch(e){
+    if(summaryEl) summaryEl.textContent = '校验失败';
+    if(tbody) tbody.innerHTML = `<tr><td colspan="4" style="color:var(--red)">${esc(e.message)}</td></tr>`;
+    toast('Cube 校验失败: '+e.message, 'error');
+  }
+}
+
+async function loadCubeValidationLatest(){
+  try{
+    const res = await apiFetch('/cube/validate/latest?limit=300');
+    renderCubeValidation(res);
+  }catch(e){ toast('加载校验结果失败: '+e.message, 'error'); }
+}
+
+function renderCubeValidation(res){
+  const summary = res.summary || {};
+  const issues = res.issues || [];
+  const summaryEl = document.getElementById('cube-validation-summary');
+  const metricsEl = document.getElementById('cube-validation-metrics');
+  const tbody = document.getElementById('cube-validation-tbody');
+  if(summaryEl){
+    summaryEl.textContent = res.run_id ? `run ${res.run_id} · ${issues.length} 条` : '暂无结果';
+  }
+  if(metricsEl){
+    metricsEl.innerHTML = `
+      <span class="validation-pill error">Error ${summary.error || 0}</span>
+      <span class="validation-pill warning">Warning ${summary.warning || 0}</span>
+      <span class="validation-pill info">Info ${summary.info || 0}</span>
+      ${res.model_version!==undefined ? `<span class="validation-pill muted">模型版本 ${esc(String(res.model_version || 0))}</span>` : ''}
+    `;
+  }
+  if(!tbody) return;
+  if(!issues.length){
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3);text-align:center">暂无校验结果</td></tr>';
+    return;
+  }
+  tbody.innerHTML = issues.map(item => {
+    const detail = item.detail ? `<div class="validation-detail">${esc(item.detail)}</div>` : '';
+    return `
+      <tr>
+        <td><span class="validation-severity ${esc(item.severity || 'info')}">${esc(item.severity || 'info')}</span></td>
+        <td><strong>${esc(item.entity_type || '')}</strong><br><code>${esc(item.entity_name || '')}</code></td>
+        <td><code>${esc(item.rule_code || '')}</code></td>
+        <td>${esc(item.message || '')}${detail}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔍 归因分析
+═══════════════════════════════════════════════════════════════════════════ */
+let rcaOptions = null;
+let lastRcaSql = '';
+
+async function initRcaPage(){
+  const state = document.getElementById('rca-option-state');
+  if(!state) return;
+  state.textContent = '加载中';
+  try{
+    rcaOptions = await apiFetch('/rca/options');
+    renderRcaOptions(rcaOptions);
+    state.textContent = '已加载';
+  }catch(e){
+    state.textContent = '加载失败';
+    toast('归因配置加载失败: '+e.message, 'error');
+  }
+}
+
+function renderRcaOptions(options){
+  const metricEl = document.getElementById('rca-metric');
+  const timeEl = document.getElementById('rca-time-dim');
+  const dimEl = document.getElementById('rca-dim-list');
+  if(!metricEl || !timeEl || !dimEl) return;
+  metricEl.innerHTML = (options.measures || []).map(m =>
+    `<option value="${esc(m.name)}">${esc(m.title || m.name)} · ${esc(m.name)}</option>`
+  ).join('');
+  const timeDims = options.time_dimensions?.length ? options.time_dimensions : (options.dimensions || []).filter(d => d.type === 'time');
+  timeEl.innerHTML = timeDims.map(d =>
+    `<option value="${esc(d.name)}">${esc(d.title || d.name)} · ${esc(d.name)}</option>`
+  ).join('');
+  const dims = (options.dimensions || []).filter(d => d.type !== 'time').slice(0, 40);
+  dimEl.innerHTML = dims.map((d, idx) => `
+    <label class="rca-dim-chip">
+      <input type="checkbox" value="${esc(d.name)}" ${idx < 4 ? 'checked' : ''}>
+      <span>${esc(d.title || d.name)}</span>
+      <code>${esc(d.name)}</code>
+    </label>
+  `).join('');
+}
+
+function selectedRcaDimensions(){
+  return Array.from(document.querySelectorAll('#rca-dim-list input:checked')).map(el => el.value);
+}
+
+async function runRcaAnalysis(){
+  const state = document.getElementById('rca-run-state');
+  if(state) state.textContent = '分析中…';
+  try{
+    const payload = {
+      metric: document.getElementById('rca-metric').value,
+      time_dimension: document.getElementById('rca-time-dim').value,
+      current_start: document.getElementById('rca-current-start').value.trim(),
+      current_end: document.getElementById('rca-current-end').value.trim(),
+      baseline_start: document.getElementById('rca-baseline-start').value.trim(),
+      baseline_end: document.getElementById('rca-baseline-end').value.trim(),
+      dimensions: selectedRcaDimensions(),
+      filters: [],
+      limit: Number(document.getElementById('rca-limit').value || 20),
+    };
+    const res = await apiFetch('/rca/analyze', {method:'POST', body:JSON.stringify(payload)});
+    renderRcaResult(res);
+    if(state) state.textContent = '完成';
+  }catch(e){
+    if(state) state.textContent = '失败';
+    toast('归因分析失败: '+e.message, 'error');
+  }
+}
+
+function renderRcaResult(res){
+  const current = res.periods?.current?.value ?? 0;
+  const baseline = res.periods?.baseline?.value ?? 0;
+  const delta = res.delta ?? 0;
+  const rate = res.delta_rate;
+  document.getElementById('rca-current-value').textContent = fmtNumber(current);
+  document.getElementById('rca-baseline-value').textContent = fmtNumber(baseline);
+  document.getElementById('rca-delta-value').textContent = fmtNumber(delta);
+  document.getElementById('rca-rate-value').textContent = rate == null ? '—' : (rate * 100).toFixed(2) + '%';
+  document.getElementById('rca-summary-text').textContent = res.summary || '';
+
+  const list = document.getElementById('rca-contribution-list');
+  const dimensions = res.dimensions || [];
+  list.innerHTML = dimensions.map(dim => `
+    <div class="rca-dim-result">
+      <div class="rca-dim-result-title">${esc(dim.dimension)}</div>
+      ${(dim.items || []).slice(0, 10).map(item => `
+        <div class="rca-factor-row">
+          <span class="rca-factor-name">${esc(item.value)}</span>
+          <span>${fmtNumber(item.current)}</span>
+          <span>${fmtNumber(item.baseline)}</span>
+          <strong class="${item.delta >= 0 ? 'pos' : 'neg'}">${fmtNumber(item.delta)}</strong>
+          <em>${item.contribution == null ? '—' : (item.contribution * 100).toFixed(1) + '%'}</em>
+        </div>
+      `).join('') || '<div class="empty-state small"><div class="empty-text">无贡献项</div></div>'}
+    </div>
+  `).join('');
+
+  lastRcaSql = (res.sql_trace || []).map(item => `-- ${item.dimension} / ${item.period}\n${item.sql}`).join('\n\n');
+  document.getElementById('rca-sql-box').textContent = lastRcaSql || '-- 暂无 SQL';
+}
+
+function copyRcaSql(){
+  if(!lastRcaSql){ toast('暂无 SQL 可复制', 'error'); return; }
+  navigator.clipboard?.writeText(lastRcaSql);
+  toast('归因 SQL 已复制');
+}
+
+function fmtNumber(value){
+  const num = Number(value || 0);
+  return Number.isFinite(num) ? num.toLocaleString(undefined, {maximumFractionDigits: 2}) : '—';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⌁ 智能归因（对话式）
+═══════════════════════════════════════════════════════════════════════════ */
+const SMART_RCA_SUGGESTED = [
+  '高价值用户流失风险与消费异动深度归因分析',
+  '4月份GMV相比3月份为什么变化？按城市和门店类型归因',
+  '上个月PLUS会员消费金额波动的主要原因是什么？',
+  '净收入下降是什么维度导致的？',
+];
+const SMART_RCA_STEPS = [
+  {name:'rca_intent', label:'① 归因意图识别'},
+  {name:'rca_multi_recall', label:'② 多路 Agent 召回'},
+  {name:'rca_plan', label:'③ 归因计划生成'},
+  {name:'rca_execute', label:'④ RCA 工具执行'},
+  {name:'rca_summary', label:'⑤ 归因结论生成'},
+];
+let _smartRcaDone = 0;
+
+function initSmartRcaPage(){
+  const wrap = document.getElementById('smart-rca-suggested');
+  const input = document.getElementById('smart-rca-question');
+  if(!wrap || !input) return;
+  wrap.innerHTML = '<span style="font-size:12px;color:var(--text3);margin-right:4px">示例：</span>';
+  SMART_RCA_SUGGESTED.forEach(q => {
+    const chip = document.createElement('span');
+    chip.className = 'sq-chip';
+    chip.textContent = q;
+    chip.onclick = () => { input.value = q; doSmartRca(); };
+    wrap.appendChild(chip);
+  });
+}
+
+function doSmartRca(){
+  const q = document.getElementById('smart-rca-question').value.trim();
+  if(!q){ toast('请输入归因问题','error'); return; }
+  if(currentSSE){ currentSSE.close(); currentSSE=null; }
+  _smartRcaDone = 0;
+  const result = document.getElementById('smart-rca-result');
+  result.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">智能归因分析中…</div></div>';
+  resetSmartRcaChain();
+  const url = API + '/rca/smart/stream?q=' + encodeURIComponent(q);
+  const sse = new EventSource(url);
+  currentSSE = sse;
+
+  sse.addEventListener('start', e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('trace-id-display').textContent = 'ID: ' + d.trace_id;
+  });
+  sse.addEventListener('step_start', e => {
+    const d = JSON.parse(e.data);
+    updateStepCard({name:d.name, status:'running'});
+    const idx = SMART_RCA_STEPS.findIndex(s => s.name === d.name);
+    if(idx > 0) updateConnector(idx - 1, 'active');
+  });
+  sse.addEventListener('step_done', e => {
+    const d = JSON.parse(e.data);
+    updateStepCard(d);
+    _smartRcaDone++;
+    setChainProgress(_smartRcaDone, SMART_RCA_STEPS.length);
+    const idx = SMART_RCA_STEPS.findIndex(s => s.name === d.name);
+    if(idx > 0) updateConnector(idx - 1, 'done');
+  });
+  sse.addEventListener('final', e => {
+    const d = JSON.parse(e.data);
+    const trace = d.trace || {};
+    document.getElementById('trace-time-display').textContent = `⏱ ${trace.total_ms?.toFixed(0)||0}ms`;
+    renderSmartRcaResult(d);
+    setChainProgress(SMART_RCA_STEPS.length, SMART_RCA_STEPS.length);
+    sse.close();
+    currentSSE = null;
+  });
+  sse.addEventListener('error', () => {
+    showSmartRcaError('智能归因连接中断，请重试');
+    sse.close();
+    currentSSE = null;
+  });
+}
+
+function resetSmartRcaChain(){
+  const body = document.getElementById('chain-body');
+  body.innerHTML = '';
+  SMART_RCA_STEPS.forEach((s, idx) => {
+    if(idx > 0) body.appendChild(makeConnector('pending'));
+    body.appendChild(makeStepCardEl(s.name, s.label, 'pending'));
+  });
+  setChainProgress(0, SMART_RCA_STEPS.length);
+}
+
+function renderSmartRcaResult(data){
+  const result = data.result || {};
+  const periods = result.periods || {};
+  const current = periods.current?.value ?? 0;
+  const baseline = periods.baseline?.value ?? 0;
+  const delta = result.delta ?? 0;
+  const rate = result.delta_rate;
+  const sqlText = (result.sql_trace || []).map(item => `-- ${item.dimension} / ${item.period}\n${item.sql}`).join('\n\n');
+  const dimsHtml = (result.dimensions || []).map(dim => `
+    <div class="rca-dim-result">
+      <div class="rca-dim-result-title">${esc(dim.dimension)}</div>
+      ${(dim.items || []).slice(0, 8).map(item => `
+        <div class="rca-factor-row">
+          <span class="rca-factor-name">${esc(item.value)}</span>
+          <span>${fmtNumber(item.current)}</span>
+          <span>${fmtNumber(item.baseline)}</span>
+          <strong class="${item.delta >= 0 ? 'pos' : 'neg'}">${fmtNumber(item.delta)}</strong>
+          <em>${item.contribution == null ? '—' : (item.contribution * 100).toFixed(1) + '%'}</em>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+  document.getElementById('smart-rca-result').innerHTML = `
+    <div class="smart-rca-answer">
+      <div class="card glow-card rca-summary-card">
+        <div class="card-header"><span class="card-title">智能归因结论</span><span class="card-kicker">${esc(data.plan?.metric||'')}</span></div>
+        <div class="card-body">
+          <div class="rca-kpis">
+            <div><span>当前期</span><strong>${fmtNumber(current)}</strong></div>
+            <div><span>对比期</span><strong>${fmtNumber(baseline)}</strong></div>
+            <div><span>变化量</span><strong>${fmtNumber(delta)}</strong></div>
+            <div><span>变化率</span><strong>${rate == null ? '—' : (rate * 100).toFixed(2) + '%'}</strong></div>
+          </div>
+          <div class="rca-summary-text">${esc(data.summary || result.summary || '')}</div>
+        </div>
+      </div>
+      <div class="card glow-card">
+        <div class="card-header"><span class="card-title">维度贡献</span></div>
+        <div class="card-body">${dimsHtml || '<div class="empty-state small"><div class="empty-text">暂无维度贡献</div></div>'}</div>
+      </div>
+      <div class="card glow-card">
+        <div class="card-header"><span class="card-title">执行 SQL</span></div>
+        <div class="card-body"><pre class="rca-sql-box">${esc(sqlText || '-- 暂无 SQL')}</pre></div>
+      </div>
+    </div>
+  `;
+}
+
+function showSmartRcaError(message){
+  const el = document.getElementById('smart-rca-result');
+  if(el) el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(message)}</div></div>`;
 }
 
 async function upsertMetric(){
@@ -798,6 +1216,11 @@ const STEP_LABELS = {
   // Cube pipeline (7 steps)
   cube_model_check:    '① Cube 模型检查',
   intent:              '② 意图理解',
+  rca_intent:          '① 归因意图识别',
+  rca_multi_recall:    '② 多路 Agent 召回',
+  rca_plan:            '③ 归因计划生成',
+  rca_execute:         '④ RCA 工具执行',
+  rca_summary:         '⑤ 归因结论生成',
   semantic_sql_rag:    '③ SQL RAG 召回',
   cube_prompt:         '④ Prompt 构建',
   cube_llm_parse:      '⑤ LLM 语义解析',
@@ -864,6 +1287,10 @@ function updateStepCard(step){
   if(detail && step.outputs){
     let html = '';
     const out = step.outputs;
+    const scoreBadge = (score, dist, quality) =>
+      '<span class="rag-score">score '+esc(String(score ?? '—'))
+      +' · dist '+esc(String(dist ?? '—'))
+      +' · quality '+esc(String(quality ?? '—'))+'</span>';
     const formatters = {
       generate_embedding: ()=>`
         <div class="detail-row"><span class="detail-label">向量维度</span><span class="detail-val highlight">${out.dims}</span></div>`,
@@ -871,7 +1298,9 @@ function updateStepCard(step){
         <div class="detail-row"><span class="detail-label">找到</span><span class="detail-val highlight">${out.found} 条</span></div>
         ${(out.top_questions||[]).map((q,i)=>`
           <div class="detail-row"><span class="detail-label">Top${i+1}</span>
-          <span class="detail-val">${esc(q)} <span style="color:var(--text3)">(${out.top_scores?.[i]??''})</span></span></div>`).join('')}`,
+          <span class="detail-val">${esc(q)}
+            ${scoreBadge(out.top_scores?.[i], out.top_distances?.[i], out.quality_scores?.[i])}
+          </span></div>`).join('')}`,
       vector_search_ddl: ()=>`
         <div class="detail-row"><span class="detail-label">找到</span><span class="detail-val highlight">${out.found} 张表</span></div>
         ${(out.tables||[]).map(t=>`<div class="detail-row"><span class="detail-label"></span><span class="detail-val">${esc(t)}</span></div>`).join('')}`,
@@ -884,6 +1313,63 @@ function updateStepCard(step){
         <div class="detail-row"><span class="detail-label">业务域</span><span class="detail-val">${esc(out.business_domain||'')}</span></div>
         <div class="detail-row"><span class="detail-label">复杂度</span><span class="detail-val">${esc(out.complexity||'')}</span></div>
         <div class="detail-row"><span class="detail-label">时间提示</span><span class="detail-val">${esc(out.time_hint||'')}</span></div>`,
+      rca_intent: ()=>`
+        <div class="detail-row"><span class="detail-label">意图</span><span class="detail-val highlight">${esc(out.intent_type||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">模式</span><span class="detail-val">${esc(out.analysis_mode||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">信号词</span><span class="detail-val">${esc((out.signals||[]).join(', ')||'—')}</span></div>`,
+      rca_multi_recall: ()=>`
+        <div class="detail-row"><span class="detail-label">指标召回</span><span class="detail-val highlight">${out.measure_count||0} 个</span></div>
+        <div class="detail-row"><span class="detail-label">维度召回</span><span class="detail-val">${out.dimension_count||0} 个</span></div>
+        <div class="detail-row"><span class="detail-label">时间维度</span><span class="detail-val">${out.time_dimension_count||0} 个</span></div>
+        <div class="detail-row"><span class="detail-label">影响关系</span><span class="detail-val">${out.influence_count||0} 条</span></div>
+        <div class="detail-row"><span class="detail-label">Top指标</span><span class="detail-val">${esc((out.top_measures||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">Top维度</span><span class="detail-val">${esc((out.top_dimensions||[]).join(', ')||'—')}</span></div>
+        ${(out.candidate_measures||[]).length?`
+          <div class="detail-subtitle">候选指标 Top ${Math.min((out.candidate_measures||[]).length, 20)}</div>
+          <div class="detail-block">${esc(JSON.stringify(out.candidate_measures||[], null, 2))}</div>
+        `:''}
+        ${(out.candidate_dimensions||[]).length?`
+          <div class="detail-subtitle">候选维度 Top ${Math.min((out.candidate_dimensions||[]).length, 30)}</div>
+          <div class="detail-block">${esc(JSON.stringify(out.candidate_dimensions||[], null, 2))}</div>
+        `:''}
+        ${(out.candidate_influences||[]).length?`
+          <div class="detail-subtitle">指标影响关系 Top ${Math.min((out.candidate_influences||[]).length, 20)}</div>
+          <div class="detail-block">${esc(JSON.stringify(out.candidate_influences||[], null, 2))}</div>
+        `:''}`,
+      rca_plan: ()=>`
+        <div class="detail-row"><span class="detail-label">指标</span><span class="detail-val highlight">${esc(out.metric||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">时间维度</span><span class="detail-val">${esc(out.time_dimension||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">当前期</span><span class="detail-val">${esc(out.current_start||'')} ~ ${esc(out.current_end||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">对比期</span><span class="detail-val">${esc(out.baseline_start||'')} ~ ${esc(out.baseline_end||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">归因维度</span><span class="detail-val highlight">${esc((out.dimensions||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">Prompt</span><span class="detail-val">${fmt(out.prompt_chars||0)} 字符</span></div>
+        ${(out.normalization_notes||[]).length?`
+          <div class="detail-subtitle">规范化修正</div>
+          ${(out.normalization_notes||[]).map(n=>`<div class="detail-row"><span class="detail-label">fix</span><span class="detail-val">${esc(n)}</span></div>`).join('')}
+        `:''}
+        <div class="detail-subtitle">LLM 原始规划</div>
+        <div class="detail-block">${esc(JSON.stringify(out.raw_plan||{}, null, 2))}</div>
+        <div class="detail-subtitle">最终归因计划</div>
+        <div class="detail-block">${esc(JSON.stringify(out.normalized_plan||{}, null, 2))}</div>`,
+      rca_execute: ()=>`
+        <div class="detail-row"><span class="detail-label">指标</span><span class="detail-val highlight">${esc(out.metric||'')}</span></div>
+        <div class="detail-row"><span class="detail-label">维度</span><span class="detail-val">${esc((out.dimensions||[]).join(', ')||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">SQL数量</span><span class="detail-val">${out.sql_count||0} 条</span></div>
+        <div class="detail-row"><span class="detail-label">变化量</span><span class="detail-val highlight">${fmt(out.delta||0)}</span></div>
+        <div class="detail-row"><span class="detail-label">变化率</span><span class="detail-val">${out.delta_rate == null ? '—' : (out.delta_rate * 100).toFixed(2) + '%'}</span></div>
+        ${(out.top_contributors||[]).length?`
+          <div class="detail-subtitle">Top 贡献项</div>
+          <div class="detail-block">${esc(JSON.stringify(out.top_contributors||[], null, 2))}</div>
+        `:''}
+        ${(out.sql_preview||[]).length?`
+          <div class="detail-subtitle">SQL 预览</div>
+          ${(out.sql_preview||[]).map((item,i)=>`
+            <div class="detail-row"><span class="detail-label">SQL${i+1}</span><span class="detail-val">${esc(item.dimension||'')} / ${esc(item.period||'')}</span></div>
+            <div class="detail-block">${esc(item.sql||'')}</div>
+          `).join('')}
+        `:''}`,
+      rca_summary: ()=>`
+        <div class="detail-block">${esc(out.summary||'')}</div>`,
       semantic_parse: ()=>`
         <div class="detail-row"><span class="detail-label">指标</span><span class="detail-val">${esc((out.metrics||[]).join(', ')||'—')}</span></div>
         <div class="detail-row"><span class="detail-label">维度</span><span class="detail-val">${esc((out.dimensions||[]).join(', ')||'—')}</span></div>
@@ -893,9 +1379,7 @@ function updateStepCard(step){
       semantic_sql_rag: ()=>{
         const rows = (out.top_questions||[]).map((q,i)=>
           '<div class="detail-row"><span class="detail-label">Q'+(i+1)+'</span><span class="detail-val">'+esc(q)
-          +' <span class="rag-score">score '+esc(String(out.top_scores?.[i] ?? '—'))
-          +' · dist '+esc(String(out.top_distances?.[i] ?? '—'))
-          +' · quality '+esc(String(out.quality_scores?.[i] ?? '—'))+'</span></span></div>'
+          +' '+scoreBadge(out.top_scores?.[i], out.top_distances?.[i], out.quality_scores?.[i])+'</span></div>'
           +((out.top_sqls||[])[i]?'<div class="detail-block">'+esc((out.top_sqls||[])[i])+'</div>':'')
         ).join('');
         const statusSpan = out.enabled===false
@@ -992,7 +1476,7 @@ function updateStepCard(step){
         ${(out.question_sql_examples||[]).length?`
           <div class="detail-subtitle">相似 SQL 示例</div>
           ${(out.question_sql_examples||[]).map((item,i)=>`
-            <div class="detail-row"><span class="detail-label">Q${i+1}</span><span class="detail-val">${esc(item.question||'')}</span></div>
+            <div class="detail-row"><span class="detail-label">Q${i+1}</span><span class="detail-val">${esc(item.question||'')} ${scoreBadge(item.score, item.distance, item.quality)}</span></div>
             <div class="detail-block">${esc(item.sql||'')}</div>
           `).join('')}
         `:''}
@@ -1516,12 +2000,23 @@ async function doMine(){
    回归测试
 ════════════════════════════════════════════════════════════════════════ */
 const DEFAULT_REGRESSION_QUESTIONS = [
-  '4月份各城市销售额是多少？',
-  '今年4月份销售额是多少？',
-  '昨日各城市销售额环比增长多少？',
+  '每个城市销售额排名前三的门店分别是哪些？',
+  '4月份各城市销售额是多少',
+  '昨日各城市销售额各环比同期增长多少？',
   'PLUS会员和普通会员消费对比？',
-  '帮我看看按门店类型划分的客单价',
-  '4月份各城市销售额和净收入是多少？',
+  '今天的总交易额是多少？',
+  '按一级类目查看商品销量。',
+  '不同门店类型的销售额分布是怎样的？',
+  '北京，PLUS会员的总消费金额是多少？',
+  '帮我看看北京的总消费金额是多少？其中 PLUS 会员消费了多少？',
+  '上个月的笔单价和成交笔数分别多少？',
+  '卖得最好的前5个城市是哪些？',
+  '查看各城市、各门店类型下的总收入和客单价。',
+  '今年每个月的GMV趋势是怎样的？',
+  '普通会员购买一级类目为101的商品，花了多少钱？',
+  '昨日各城市销售额环比同期增长多少？',
+  '上海会员、非会员的总消费金额分别是多少，对比值？',
+  '高价值用户流失风险与消费异动深度归因分析'
 ];
 
 function initRegressionPage(){

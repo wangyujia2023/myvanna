@@ -224,6 +224,9 @@ class AskLCPipeline:
                     {
                         "question": item.get("question", ""),
                         "sql": item.get("content", ""),
+                        "score": round(max(0.0, 1.0 - float(item.get("dist", 0) or 0)), 4) if item.get("dist") is not None else None,
+                        "distance": round(float(item.get("dist", 0) or 0), 4) if item.get("dist") is not None else None,
+                        "quality": round(float(item.get("quality_score", 0) or 0), 4),
                     }
                     for item in fused.get("sql_examples", [])
                 ],

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AgentBI — 零售运营分析平台</title>
-<link rel="stylesheet" href="/ui/style.css">
+<link rel="stylesheet" href="/ui/style.css?v=20260428-smart-rca">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
   <!-- ═══ Sidebar ══════════════════════════════════════════════════════════ -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">🧠</div>
+      <div class="logo-icon">AI</div>
       <div class="logo-text">
         <div class="logo-name">AgentBI 平台</div>
         <div class="logo-sub">零售运营分析 · 受控问数</div>
@@ -30,6 +30,9 @@
         <a class="nav-item nav-btn" id="nav-rca" onclick="showPage('rca')">
           <span class="nav-icon">🔍</span> 归因分析
         </a>
+        <a class="nav-item nav-btn" id="nav-smart-rca" onclick="showPage('smart-rca')">
+          <span class="nav-icon">⌁</span> 智能归因
+        </a>
         <a class="nav-item nav-btn" id="nav-regression" onclick="showPage('regression')">
           <span class="nav-icon">🧪</span> 回归测试
         </a>
@@ -44,10 +47,10 @@
         <a class="nav-item nav-btn" id="nav-manage" onclick="showPage('manage')">
           <span class="nav-icon">📋</span> 指标详情
         </a>
-        <a class="nav-item nav-btn" id="nav-cube" onclick="showTab('cube')">
+        <a class="nav-item nav-btn" id="nav-cube" onclick="showPage('cube')">
           <span class="nav-icon">◎</span> Metric Cube
         </a>
-        <a class="nav-item nav-btn" id="nav-semantic" onclick="showTab('semantic')">
+        <a class="nav-item nav-btn" id="nav-semantic" onclick="showPage('semantic')">
           <span class="nav-icon">🧬</span> 语义层管理
         </a>
       </div>
@@ -98,7 +101,6 @@
           <div class="status-dot ok" id="status-dot"></div>
           <span>Doris 已连接</span>
         </div>
-        <div class="topbar-badge badge-blue" id="cube-badge">零售运营分析 Cube</div>
         <div class="topbar-badge badge-dim" id="cutoff-badge">数据截止 <span id="data-cutoff">—</span></div>
       </div>
     </div>
@@ -111,6 +113,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
-<script src="/ui/app.js"></script>
+<script src="/ui/app.js?v=20260428-smart-rca"></script>
 </body>
 </html>
