@@ -85,6 +85,17 @@ class CubeTemplate:
 
 
 @dataclass
+class CubeSemanticAlias:
+    entity_type: str
+    entity_name: str
+    alias_text: str
+    source: str = "manual"
+    weight: float = 1.0
+    match_type: str = "contains"
+    visible: bool = True
+
+
+@dataclass
 class CubeBundle:
     models: List[CubeModel] = field(default_factory=list)
     measures: List[CubeMeasure] = field(default_factory=list)
@@ -93,5 +104,6 @@ class CubeBundle:
     joins: List[CubeJoin] = field(default_factory=list)
     segments: List[CubeSegment] = field(default_factory=list)
     templates: List[CubeTemplate] = field(default_factory=list)
+    aliases: List[CubeSemanticAlias] = field(default_factory=list)
     version_no: int = 0
     checksum: str = ""

@@ -4,6 +4,14 @@ cube(`orders`, {
   public: true,
 
   joins: {
+    cities: {
+      sql: `{CUBE}.city_code = {cities}.city_code`,
+      relationship: `many_to_one`
+    },
+    member_types: {
+      sql: `{users.is_plus_vip} = {member_types}.member_type_code`,
+      relationship: `many_to_one`
+    },
     refunds: {
       sql: `{CUBE}.order_id = {refunds}.order_id`,
       relationship: `one_to_many`
@@ -43,11 +51,23 @@ cube(`orders`, {
       title: `销售额`,
       format: `currency`,
     },
+    item_sold_qty: {
+      sql: `sku_num`,
+      type: `sum`,
+      title: `商品销量`,
+      format: `number`,
+    },
     net_revenue: {
       sql: `SUM({CUBE}.apportion_amt) - COALESCE(SUM({refunds.refund_amt}), 0)`,
       type: `number`,
       title: `净收入`,
       format: `currency`,
+    },
+    order_count: {
+      sql: `order_id`,
+      type: `countDistinct`,
+      title: `订单量`,
+      format: `number`,
     },
     plus_consume_amt: {
       sql: `CASE WHEN {users.is_plus_vip} = 1 THEN {CUBE}.apportion_amt ELSE 0 END`,
@@ -62,11 +82,6 @@ cube(`orders`, {
       sql: `category_1_id`,
       type: `number`,
       title: `一级类目`,
-    },
-    city_code: {
-      sql: `city_code`,
-      type: `string`,
-      title: `城市编码`,
     },
     dt: {
       sql: `dt`,

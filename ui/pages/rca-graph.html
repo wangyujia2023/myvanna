@@ -1,0 +1,63 @@
+<div class="page active" id="page-rca-graph">
+  <div class="cube-module-page">
+    <header class="cube-module-topbar">
+      <div class="cube-module-nav" id="rca-graph-nav"></div>
+      <div class="cube-topbar-actions">
+        <button class="btn btn-sm btn-secondary" onclick="loadRcaGraphSummary()">刷新摘要</button>
+        <button class="btn btn-sm btn-primary" onclick="loadRcaGraphRows()">刷新数据</button>
+      </div>
+    </header>
+
+    <main class="cube-module-main">
+      <section class="cube-entity-page">
+        <div class="cube-dashboard-strip">
+          <div class="cube-stat-card">
+            <span>当前功能</span>
+            <strong id="rca-graph-title">RCA 节点</strong>
+          </div>
+          <div class="cube-stat-card">
+            <span>图谱摘要</span>
+            <strong id="rca-graph-summary">加载中…</strong>
+          </div>
+          <div class="cube-stat-card">
+            <span>编辑状态</span>
+            <strong id="rca-graph-editor-state">未选择</strong>
+          </div>
+        </div>
+
+        <section class="cube-editor-layout">
+          <div class="card glow-card cube-table-card">
+            <div class="card-header">
+              <span class="card-title">数据列表</span>
+              <button class="btn btn-sm btn-secondary" onclick="loadRcaGraphRows()">刷新</button>
+              <button class="btn btn-sm btn-primary" onclick="newRcaGraphRow()">新增</button>
+            </div>
+            <div class="cube-table-wrap">
+              <table>
+                <thead id="rca-graph-thead"></thead>
+                <tbody id="rca-graph-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card glow-card cube-editor-card">
+            <div class="card-header">
+              <span class="card-title">JSON 编辑器</span>
+            </div>
+            <div class="card-body">
+              <textarea class="form-input form-textarea" id="rca-graph-row-json"></textarea>
+              <div class="cube-editor-actions">
+                <button class="btn btn-primary" onclick="saveRcaGraphRow()">保存</button>
+                <button class="btn btn-danger" onclick="deleteRcaGraphRow()">删除</button>
+                <button class="btn btn-secondary" onclick="formatRcaGraphJson()">格式化</button>
+              </div>
+              <div class="form-hint" id="rca-graph-msg">
+                RCA 图谱使用 Doris 普通表维护，保存后下一次智能归因会重新加载运行时服务。
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+</div>

@@ -1,18 +1,5 @@
 <div class="page" id="page-config">
   <div class="config-shell">
-    <div class="config-hero">
-      <div>
-        <div class="eyebrow">Agent Runtime Console</div>
-        <h2>Agent 调试台</h2>
-        <p>集中维护 Doris、Qwen、Cube 与降级策略。这里的配置会重置运行时连接，适合调试完整调用链路。</p>
-      </div>
-      <div class="config-hero-card">
-        <span class="hero-k">Mode</span>
-        <strong>Cube First</strong>
-        <span>受控语义编译 · 可追踪</span>
-      </div>
-    </div>
-
     <div class="config-grid">
     <div class="card glow-card">
       <div class="card-header"><span class="card-title">Doris 连接</span><span class="card-kicker">Warehouse</span></div>
@@ -97,6 +84,10 @@
           <label class="form-label">Cube 配置库</label>
           <input class="form-input" id="cfg-cube-store-db" value="cube_store">
         </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">RCA 图谱库</label>
+          <input class="form-input" id="cfg-rca-store-db" value="rca_store">
+        </div>
         <div class="form-group">
           <label class="form-label">Cube 模型加载模式</label>
           <label style="display:flex;align-items:center;gap:10px;color:var(--text2);font-size:13px">
@@ -104,6 +95,16 @@
             每次请求都从 Doris 重新加载 Cube 模型
           </label>
           <div class="form-hint">默认关闭。关闭时首次加载到内存，后续查询不再访问 cube_store；修改配置后可保存重置连接或调用模型重载接口刷新。</div>
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label">默认时间范围</label>
+          <select class="form-input" id="cfg-cube-default-time">
+            <option value="">不自动补时间</option>
+            <option value="last_30_days">近30天</option>
+            <option value="this_month">本月截至今天</option>
+            <option value="last_month">上个月</option>
+          </select>
+          <div class="form-hint">仅当问题没有明确时间时生效。建议调试期保持关闭，业务上线后再按口径开启。</div>
         </div>
       </div>
     </div>

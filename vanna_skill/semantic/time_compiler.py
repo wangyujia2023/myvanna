@@ -25,6 +25,12 @@ def _quarter_bounds(year: int, quarter: int) -> tuple[str, str]:
     return start.isoformat(), end.isoformat()
 
 
+def _week_bounds(day: date) -> tuple[str, str]:
+    start = day - timedelta(days=day.weekday())
+    end = start + timedelta(days=6)
+    return start.isoformat(), end.isoformat()
+
+
 def _shift_year(d: date, years: int) -> date:
     try:
         return d.replace(year=d.year + years)
@@ -76,26 +82,43 @@ class TimeScopeCompiler:
                 return TimeScope("month", "day", start, end, hint, hint)
             if re.match(r"^\d{4}$", hint):
                 return TimeScope("year", "day", f"{hint}-01-01", f"{hint}-12-31", hint, hint)
-            if hint == "今天":
+            recent_m = re.match(r"^(?:最近|近|过去)\s*(\d+)\s*天$", hint)
+            if recent_m:
+                days = max(1, int(recent_m.group(1)))
+                start = today - timedelta(days=days - 1)
+                return TimeScope("range", "day", start.isoformat(), today.isoformat(), hint, hint)
+            if hint in ("今天", "today"):
                 d = today.isoformat()
                 return TimeScope("day", "day", d, d, hint, hint)
-            if hint == "昨天":
+            if hint in ("昨天", "yesterday"):
                 d = (today - timedelta(days=1)).isoformat()
                 return TimeScope("day", "day", d, d, hint, hint)
-            if hint in ("本月", "当月"):
+            if hint in ("前天", "day_before_yesterday"):
+                d = (today - timedelta(days=2)).isoformat()
+                return TimeScope("day", "day", d, d, hint, hint)
+            if hint in ("本月", "当月", "this_month"):
                 start, end = _month_bounds(today.year, today.month)
                 return TimeScope("month", "day", start, end, hint, hint)
-            if hint in ("上月", "上个月"):
+            if hint in ("上月", "上个月", "last_month"):
                 ref = (today.replace(day=1) - timedelta(days=1))
                 start, end = _month_bounds(ref.year, ref.month)
                 return TimeScope("month", "day", start, end, hint, hint)
-            if hint in ("本年", "今年"):
+            if hint in ("本周", "这周", "this_week"):
+                start, _ = _week_bounds(today)
+                return TimeScope("week", "day", start, today.isoformat(), hint, hint)
+            if hint in ("上周", "上星期", "last_week"):
+                start, end = _week_bounds(today - timedelta(days=7))
+                return TimeScope("week", "day", start, end, hint, hint)
+            if hint in ("本年", "今年", "this_year"):
                 return TimeScope("year", "day", f"{today.year}-01-01", f"{today.year}-12-31", hint, hint)
-            if hint in ("本季度", "当季"):
+            if hint in ("去年", "last_year"):
+                year = today.year - 1
+                return TimeScope("year", "day", f"{year}-01-01", f"{year}-12-31", hint, hint)
+            if hint in ("本季度", "当季", "this_quarter"):
                 quarter = (today.month - 1) // 3 + 1
                 start, end = _quarter_bounds(today.year, quarter)
                 return TimeScope("quarter", "day", start, end, hint, hint)
-            if hint == "上季度":
+            if hint in ("上季度", "last_quarter"):
                 this_q = (today.month - 1) // 3 + 1
                 if this_q == 1:
                     year, quarter = today.year - 1, 4
@@ -104,12 +127,66 @@ class TimeScopeCompiler:
                 start, end = _quarter_bounds(year, quarter)
                 return TimeScope("quarter", "day", start, end, hint, hint)
 
+        relative_month = re.search(r"(今年|本年|去年)\s*(\d{1,2})\s*月(?:份)?", question)
+        if relative_month:
+            year = today.year - (1 if relative_month.group(1) == "去年" else 0)
+            month = int(relative_month.group(2))
+            if 1 <= month <= 12:
+                start, end = _month_bounds(year, month)
+                label = f"{year}-{month:02d}"
+                return TimeScope("month", "day", start, end, label, relative_month.group(0))
+
+        explicit_month = re.search(r"(\d{4})[-年](\d{1,2})(?:月|$)", question)
+        if explicit_month:
+            year = int(explicit_month.group(1))
+            month = int(explicit_month.group(2))
+            if 1 <= month <= 12:
+                start, end = _month_bounds(year, month)
+                label = f"{year}-{month:02d}"
+                return TimeScope("month", "day", start, end, label, explicit_month.group(0))
+
+        month_only = re.search(r"(?<!\d)(\d{1,2})\s*月(?:份)?", question)
+        if month_only:
+            month = int(month_only.group(1))
+            if 1 <= month <= 12:
+                start, end = _month_bounds(today.year, month)
+                label = f"{today.year}-{month:02d}"
+                return TimeScope("month", "day", start, end, label, month_only.group(0))
+
+        recent_m = re.search(r"(?:最近|近|过去)\s*(\d+)\s*天", question)
+        if recent_m:
+            days = max(1, int(recent_m.group(1)))
+            start = today - timedelta(days=days - 1)
+            label = recent_m.group(0)
+            return TimeScope("range", "day", start.isoformat(), today.isoformat(), label, label)
+
+        if "前天" in question:
+            d = (today - timedelta(days=2)).isoformat()
+            return TimeScope("day", "day", d, d, "前天", "前天")
         if "昨天" in question or "昨日" in question:
             d = (today - timedelta(days=1)).isoformat()
             return TimeScope("day", "day", d, d, "昨日", "昨日")
         if "今天" in question or "今日" in question:
             d = today.isoformat()
             return TimeScope("day", "day", d, d, "今日", "今日")
+        if "上个月" in question or "上月" in question:
+            ref = today.replace(day=1) - timedelta(days=1)
+            start, end = _month_bounds(ref.year, ref.month)
+            return TimeScope("month", "day", start, end, "上个月", "上个月")
+        if "这个月" in question or "本月" in question or "当月" in question:
+            start, end = _month_bounds(today.year, today.month)
+            return TimeScope("month", "day", start, end, "本月", "本月")
+        if "上周" in question or "上星期" in question:
+            start, end = _week_bounds(today - timedelta(days=7))
+            return TimeScope("week", "day", start, end, "上周", "上周")
+        if "本周" in question or "这周" in question or "这个星期" in question:
+            start, _ = _week_bounds(today)
+            return TimeScope("week", "day", start, today.isoformat(), "本周", "本周")
+        if "去年" in question:
+            year = today.year - 1
+            return TimeScope("year", "day", f"{year}-01-01", f"{year}-12-31", "去年", "去年")
+        if "今年" in question or "本年" in question:
+            return TimeScope("year", "day", f"{today.year}-01-01", f"{today.year}-12-31", "今年", "今年")
 
         range_m = re.search(r"(\d{4}-\d{2}-\d{2})\s*(?:到|至|-)\s*(\d{4}-\d{2}-\d{2})", question)
         if range_m:
@@ -164,7 +241,10 @@ class TimeScopeCompiler:
         return any(k in question for k in ["趋势", "变化", "走势", "按月", "每日", "每天", "各月"])
 
     def _is_ranking_query(self, question: str) -> bool:
-        return any(k in question for k in ["排名", "top", "TOP", "最高", "最低", "前十", "前10"])
+        return (
+            any(k in question for k in ["排名", "排行", "top", "TOP", "最高", "最低", "最好", "前十", "前10"])
+            or re.search(r"前\s*\d+", question) is not None
+        )
 
 
 def enrich_query_spec(question: str, intent: Optional[IntentPlan], spec: QuerySpec) -> QuerySpec:

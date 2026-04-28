@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "semantic_to_langchain_fallback_enabled": False,
     "semantic_sql_rag_enabled": True,
     "cube_store_database": "cube_store",
+    "rca_store_database": "rca_store",
     "cube_generated_dir": "cube/model/generated",
     "cube_model_reload_each_request": False,
     "initial_prompt": "",

@@ -124,6 +124,23 @@ COMMENT 'Cube SQL 模板与片段'
 DISTRIBUTED BY HASH(template_id) BUCKETS 2
 PROPERTIES ("replication_num" = "1");
 
+CREATE TABLE IF NOT EXISTS cube_semantic_aliases (
+    alias_id         BIGINT          NOT NULL,
+    entity_type      VARCHAR(64)     NOT NULL COMMENT 'measure/dimension/segment/template',
+    entity_name      VARCHAR(128)    NOT NULL COMMENT '实体名称，如 gmv/city_code',
+    alias_text       VARCHAR(256)    NOT NULL COMMENT '自然语言别名/同义词',
+    source           VARCHAR(64)     DEFAULT 'manual' COMMENT 'seed/manual/derived/feedback',
+    match_type       VARCHAR(32)     DEFAULT 'contains' COMMENT 'contains/exact/regex',
+    weight           DOUBLE          DEFAULT 1.0 COMMENT '匹配权重',
+    visible          TINYINT         DEFAULT 1,
+    version          INT             DEFAULT 1,
+    updated_at       DATETIME        DEFAULT CURRENT_TIMESTAMP
+) ENGINE=OLAP
+UNIQUE KEY(alias_id)
+COMMENT 'Cube 语义别名表：自然语言词汇到指标/维度/模板的映射'
+DISTRIBUTED BY HASH(alias_id) BUCKETS 4
+PROPERTIES ("replication_num" = "1");
+
 CREATE TABLE IF NOT EXISTS cube_meta (
     meta_id          BIGINT          NOT NULL,
     scope            VARCHAR(64)     NOT NULL,

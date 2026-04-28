@@ -3,7 +3,7 @@ CREATE DATABASE IF NOT EXISTS retail_dw;
 USE retail_dw;
 
 -- ==========================================================================
--- 1. DIM 层 (维度表 - 5张)
+-- 1. DIM 层 (维度表 - 7张)
 -- ==========================================================================
 
 CREATE TABLE IF NOT EXISTS dim_user_info (
@@ -39,6 +39,25 @@ CREATE TABLE IF NOT EXISTS dim_store_info (
 ) ENGINE=OLAP UNIQUE KEY(store_id) 
 COMMENT '门店与前置仓维度表'
 DISTRIBUTED BY HASH(store_id) BUCKETS 1 PROPERTIES ("replication_num" = "1");
+
+CREATE TABLE IF NOT EXISTS dim_city_info (
+    city_code       VARCHAR(32)     COMMENT '城市编码',
+    city_name       VARCHAR(128)    COMMENT '城市名称',
+    province_name   VARCHAR(128)    COMMENT '省份/直辖市',
+    region_id       INT             COMMENT '大区ID',
+    region_name     VARCHAR(128)    COMMENT '大区名称'
+) ENGINE=OLAP UNIQUE KEY(city_code)
+COMMENT '城市与大区维度表'
+DISTRIBUTED BY HASH(city_code) BUCKETS 1 PROPERTIES ("replication_num" = "1");
+
+CREATE TABLE IF NOT EXISTS dim_member_type_info (
+    member_type_code TINYINT        COMMENT '会员类型编码：1=PLUS会员，0=普通会员',
+    member_type_name VARCHAR(64)    COMMENT '会员类型名称',
+    member_level     VARCHAR(64)    COMMENT '会员等级',
+    description      VARCHAR(256)   COMMENT '业务说明'
+) ENGINE=OLAP UNIQUE KEY(member_type_code)
+COMMENT '会员类型维度表'
+DISTRIBUTED BY HASH(member_type_code) BUCKETS 1 PROPERTIES ("replication_num" = "1");
 
 CREATE TABLE IF NOT EXISTS dim_coupon_rule (
     coupon_id       BIGINT          COMMENT '优惠券规则ID', 

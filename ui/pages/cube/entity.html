@@ -14,6 +14,32 @@
     </div>
   </div>
 
+  <section class="card glow-card cube-enum-collector" id="cube-enum-collector" style="display:none">
+      <div class="card-header">
+      <span class="card-title">枚举采集范围</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-secondary" onclick="loadCubeEnumOptions()">刷新候选</button>
+        <button class="btn btn-sm btn-secondary" onclick="setCubeEnumRecommended()">推荐项</button>
+        <button class="btn btn-sm btn-primary" onclick="collectCubeEnums()">采集勾选项</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="form-hint" style="margin-bottom:10px">
+        只建议采集低基数、稳定、会被用户自然语言提到的维度。订单、用户、退款等明细 Cube 默认不建议采集。
+      </div>
+      <div class="cube-enum-toolbar">
+        <label class="form-label">单维度最大值</label>
+        <input class="form-input" id="cube-enum-max-values" type="number" value="200" min="1" max="1000">
+        <label class="form-label">最大基数</label>
+        <input class="form-input" id="cube-enum-max-cardinality" type="number" value="500" min="1" max="5000">
+      </div>
+      <div class="cube-enum-options" id="cube-enum-options">
+        <div class="empty-text">正在加载可采集维度…</div>
+      </div>
+      <div class="form-hint" id="cube-enum-msg"></div>
+    </div>
+  </section>
+
   <section class="cube-editor-layout">
     <div class="card glow-card cube-table-card">
       <div class="card-header">

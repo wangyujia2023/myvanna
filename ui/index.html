@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AgentBI — 零售运营分析平台</title>
-<link rel="stylesheet" href="/ui/style.css?v=20260428-smart-rca">
+<link rel="stylesheet" href="/ui/style.css?v=20260428-rca-runs">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
 </head>
 <body>
@@ -34,7 +34,10 @@
           <span class="nav-icon">⌁</span> 智能归因
         </a>
         <a class="nav-item nav-btn" id="nav-regression" onclick="showPage('regression')">
-          <span class="nav-icon">🧪</span> 回归测试
+          <span class="nav-icon">🧪</span> 问数回归
+        </a>
+        <a class="nav-item nav-btn" id="nav-rca-regression" onclick="showPage('rca-regression')">
+          <span class="nav-icon">⌬</span> 归因回归
         </a>
         <a class="nav-item nav-btn nav-disabled">
           <span class="nav-icon">📊</span> 报告中心
@@ -43,15 +46,15 @@
       </div>
 
       <div class="nav-section">
-        <div class="nav-section-title">指标治理</div>
+        <div class="nav-section-title">语义治理</div>
         <a class="nav-item nav-btn" id="nav-manage" onclick="showPage('manage')">
-          <span class="nav-icon">📋</span> 指标详情
+          <span class="nav-icon">▤</span> 知识库管理
         </a>
         <a class="nav-item nav-btn" id="nav-cube" onclick="showPage('cube')">
           <span class="nav-icon">◎</span> Metric Cube
         </a>
-        <a class="nav-item nav-btn" id="nav-semantic" onclick="showPage('semantic')">
-          <span class="nav-icon">🧬</span> 语义层管理
+        <a class="nav-item nav-btn" id="nav-rca-graph" onclick="showPage('rca-graph')">
+          <span class="nav-icon">⌘</span> 归因图谱
         </a>
       </div>
 
@@ -60,8 +63,11 @@
         <a class="nav-item nav-btn" id="nav-log" onclick="showPage('log')">
           <span class="nav-icon">📋</span> 查询审计
         </a>
+        <a class="nav-item nav-btn" id="nav-rca-runs" onclick="showPage('rca-runs')">
+          <span class="nav-icon">⌬</span> 归因审计
+        </a>
         <a class="nav-item nav-btn" id="nav-config" onclick="showPage('config')">
-          <span class="nav-icon">🔧</span> Agent 调试台
+          <span class="nav-icon">⚙</span> 系统管理
         </a>
       </div>
 
@@ -113,6 +119,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
-<script src="/ui/app.js?v=20260428-smart-rca"></script>
+<script src="/ui/app.js?v=20260428-rca-runs"></script>
 </body>
 </html>

@@ -29,6 +29,7 @@ class CubeQuery:
     dimensions: List[str] = field(default_factory=list)
     filters: List[CubeFilter] = field(default_factory=list)
     segments: List[str] = field(default_factory=list)
+    derived_metrics: List[Dict[str, Any]] = field(default_factory=list)
     order: List[Dict[str, str]] = field(default_factory=list)
     limit: Optional[int] = None
     rag_hints: List[Dict[str, Any]] = field(default_factory=list)
@@ -172,6 +173,17 @@ class CubeService:
             dim = self._resolve_dimension(dimensions, flt.member)
             required_cubes.add(dim.cube_name)
             required_cubes.update(self._referenced_cubes(dim.sql_expr, dim.cube_name, model_names))
+        for derived in query.derived_metrics:
+            base_measure_name = str(derived.get("base_measure") or "")
+            if base_measure_name:
+                base_measure = self._resolve_measure(measures, base_measure_name)
+                required_cubes.add(base_measure.cube_name)
+                required_cubes.update(self._referenced_cubes(base_measure.sql_expr, base_measure.cube_name, model_names))
+            for raw_filter in derived.get("conditions", []) or []:
+                flt = self._dict_to_filter(raw_filter)
+                dim = self._resolve_dimension(dimensions, flt.member)
+                required_cubes.add(dim.cube_name)
+                required_cubes.update(self._referenced_cubes(dim.sql_expr, dim.cube_name, model_names))
 
         join_sqls = self._resolve_joins(base_cube, required_cubes, joins_by_cube, models)
         select_clauses: List[str] = []
@@ -185,6 +197,8 @@ class CubeService:
             select_clauses.append(
                 f"{self._render_measure_expr(measure)} AS {measure.measure_name}"
             )
+        for derived in query.derived_metrics:
+            select_clauses.append(self._render_derived_metric(derived, measures, dimensions))
 
         where_clauses: List[str] = []
         for segment in resolved_segments:
@@ -235,26 +249,50 @@ class CubeService:
         models: Dict[str, Any],
     ) -> List[str]:
         join_lines: List[str] = []
-        for cube in sorted(required_cubes):
-            if cube == base_cube:
-                continue
-            join = next(
-                (
-                    item
-                    for item in joins_by_cube.get(base_cube, [])
-                    if item.target_cube == cube and (item.join_sql or "").strip()
-                ),
-                None,
-            )
-            if join is None:
-                raise ValueError(f"Cube {base_cube} 到 {cube} 缺少 join 配置")
-            target = models.get(cube)
-            if target is None:
-                raise ValueError(f"Join 目标 Cube 不存在: {cube}")
-            target_from = self._render_model_from(target, cube)
-            join_type = join.join_type.upper().strip() or "LEFT"
-            join_sql = self._resolve_cube_sql(join.join_sql, base_cube, base_cube)
-            join_lines.append(f"{join_type} JOIN {target_from} ON {join_sql}")
+        model_names = set(models)
+        pending = set(required_cubes) - {base_cube}
+        joined = {base_cube}
+        rendered: set[str] = set()
+        while pending:
+            progressed = False
+            for cube in sorted(list(pending)):
+                if cube in rendered:
+                    pending.discard(cube)
+                    continue
+                join = next(
+                    (
+                        item
+                        for item in joins_by_cube.get(base_cube, [])
+                        if item.target_cube == cube and (item.join_sql or "").strip()
+                    ),
+                    None,
+                )
+                if join is None:
+                    raise ValueError(f"Cube {base_cube} 到 {cube} 缺少 join 配置")
+
+                deps = self._referenced_cubes(join.join_sql, base_cube, model_names) - {base_cube, cube}
+                missing_deps = {dep for dep in deps if dep in models and dep not in joined}
+                if missing_deps:
+                    before = len(pending)
+                    pending.update(missing_deps)
+                    if len(pending) > before:
+                        progressed = True
+                    continue
+
+                target = models.get(cube)
+                if target is None:
+                    raise ValueError(f"Join 目标 Cube 不存在: {cube}")
+                target_from = self._render_model_from(target, cube)
+                join_type = join.join_type.upper().strip() or "LEFT"
+                join_sql = self._resolve_cube_sql(join.join_sql, base_cube, base_cube)
+                join_lines.append(f"{join_type} JOIN {target_from} ON {join_sql}")
+                joined.add(cube)
+                rendered.add(cube)
+                pending.discard(cube)
+                progressed = True
+            if not progressed:
+                unresolved = ", ".join(sorted(pending))
+                raise ValueError(f"无法解析 Cube Join 顺序，可能存在循环或缺少依赖: {unresolved}")
         return join_lines
 
     def _render_measure_expr(self, measure: CubeMeasure) -> str:
@@ -322,7 +360,61 @@ class CubeService:
             payload["limit"] = query.limit
         if query.rag_hints:
             payload["ragHints"] = query.rag_hints
+        if query.derived_metrics:
+            payload["derivedMetrics"] = query.derived_metrics
         return payload
+
+    def _dict_to_filter(self, item: Any) -> CubeFilter:
+        if isinstance(item, CubeFilter):
+            return item
+        if not isinstance(item, dict):
+            raise ValueError(f"非法过滤条件: {item!r}")
+        values = item.get("values", [])
+        if not isinstance(values, list):
+            values = [values]
+        return CubeFilter(
+            member=str(item.get("member") or ""),
+            operator=str(item.get("operator") or "equals"),
+            values=values,
+        )
+
+    def _render_derived_metric(
+        self,
+        derived: Dict[str, Any],
+        measures: Dict[str, CubeMeasure],
+        dimensions: Dict[str, CubeDimension],
+    ) -> str:
+        metric_type = str(derived.get("type") or "subset").lower()
+        alias = str(derived.get("alias") or "subset_metric").strip()
+        if not _IDENTIFIER_RE.match(alias):
+            raise ValueError(f"派生指标 alias 非法: {alias}")
+        base_measure = self._resolve_measure(measures, str(derived.get("base_measure") or ""))
+        conditions = [
+            self._render_filter(self._resolve_dimension(dimensions, flt.member), flt)
+            for flt in (self._dict_to_filter(item) for item in (derived.get("conditions", []) or []))
+        ]
+        condition_sql = " AND ".join(conditions) if conditions else "1=1"
+        subset_expr = self._render_conditional_measure_expr(base_measure, condition_sql)
+        if metric_type == "ratio":
+            total_expr = self._render_measure_expr(base_measure)
+            expr = f"{subset_expr} / NULLIF({total_expr}, 0)"
+        else:
+            expr = subset_expr
+        return f"{expr} AS {alias}"
+
+    def _render_conditional_measure_expr(self, measure: CubeMeasure, condition_sql: str) -> str:
+        expr = self._resolve_cube_sql(measure.sql_expr or "", measure.cube_name, measure.cube_name)
+        measure_type = measure.measure_type.lower().strip()
+        if measure_type == "sum":
+            return f"SUM(CASE WHEN {condition_sql} THEN {expr} ELSE 0 END)"
+        if measure_type == "count":
+            inner = expr if expr.strip() else "1"
+            return f"COUNT(CASE WHEN {condition_sql} THEN {inner} END)"
+        if measure_type == "countdistinct":
+            return f"COUNT(DISTINCT CASE WHEN {condition_sql} THEN {expr} END)"
+        if measure_type == "avg":
+            return f"AVG(CASE WHEN {condition_sql} THEN {expr} END)"
+        raise ValueError(f"暂不支持派生指标的 measure_type: {measure.measure_type}")
 
     def _resolve_measure(
         self,

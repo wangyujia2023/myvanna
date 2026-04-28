@@ -1,7 +1,9 @@
 {
   "version_no": 1,
-  "checksum": "28f8a29f921ecc631e19eaddebf38bc7",
+  "checksum": "37c4bf74e65981c8526c4279f069502b",
   "files": [
+    "cities.js",
+    "member_types.js",
     "orders.js",
     "refunds.js",
     "stores.js",

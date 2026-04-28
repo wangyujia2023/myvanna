@@ -8,9 +8,11 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import md5
 from typing import Any, Callable, Dict, List, Optional
 
 from ..cube.service import CubeService
+from ..doris_client import DorisClient
 from ..qwen_client import QwenClient
 from .service import RCARequest, RCAService
 
@@ -35,6 +37,7 @@ class SmartRCAPipeline:
             api_key=config.get("qwen_api_key", ""),
             model=config.get("model", "qwen-plus"),
         )
+        self._store_client: Optional[DorisClient] = None
 
     def stream(self, question: str):
         events: queue.Queue = queue.Queue()
@@ -95,95 +98,181 @@ class SmartRCAPipeline:
             return outputs
 
         notify("start", {"trace_id": trace_id, "question": question})
-
-        intent = step("rca_intent", "① 归因意图识别", lambda: self._intent(question))
-
-        def recalls():
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                f_options = pool.submit(self._options_recall, question)
-                f_influences = pool.submit(self._influence_recall, question)
-                return f_options.result(), f_influences.result()
-
-        recall_context = step(
-            "rca_multi_recall",
-            "② 多路 Agent 召回",
-            lambda: self._pack_recalls(*recalls()),
-        )
-
-        plan_pack = step(
-            "rca_plan",
-            "③ 归因计划生成",
-            lambda: self._plan(question, intent, recall_context, recall_context),
-        )
-        plan = plan_pack["normalized_plan"]
-
+        plan: dict = {}
         result_holder: dict = {}
+        try:
+            intent = step("rca_intent", "① 归因意图识别", lambda: self._intent(question))
 
-        def execute():
-            req = RCARequest(
-                metric=plan["metric"],
-                time_dimension=plan["time_dimension"],
-                current_start=plan["current_start"],
-                current_end=plan["current_end"],
-                baseline_start=plan["baseline_start"],
-                baseline_end=plan["baseline_end"],
-                dimensions=plan["dimensions"],
-                limit=int(plan.get("limit") or 20),
+            def recalls():
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    f_options = pool.submit(self._options_recall, question)
+                    f_influences = pool.submit(self._influence_recall, question)
+                    return f_options.result(), f_influences.result()
+
+            recall_context = step(
+                "rca_multi_recall",
+                "② 多路 Agent 召回",
+                lambda: self._pack_recalls(*recalls()),
             )
-            result_holder.update(self._rca.analyze(req))
-            top_contributors = []
-            for dim in result_holder.get("dimensions", []):
-                for item in (dim.get("items") or [])[:3]:
-                    top_contributors.append(
+
+            plan_pack = step(
+                "rca_plan",
+                "③ 归因计划生成",
+                lambda: self._plan(question, intent, recall_context, recall_context),
+            )
+            plan = plan_pack["normalized_plan"]
+
+            def execute():
+                req = RCARequest(
+                    metric=plan["metric"],
+                    time_dimension=plan["time_dimension"],
+                    current_start=plan["current_start"],
+                    current_end=plan["current_end"],
+                    baseline_start=plan["baseline_start"],
+                    baseline_end=plan["baseline_end"],
+                    dimensions=plan["dimensions"],
+                    limit=int(plan.get("limit") or 20),
+                )
+                result_holder.update(self._rca.analyze(req))
+                top_contributors = self._top_contributors(result_holder)
+                return {
+                    "metric": req.metric,
+                    "time_dimension": req.time_dimension,
+                    "dimensions": req.dimensions,
+                    "sql_count": len(result_holder.get("sql_trace", [])),
+                    "sql_preview": [
                         {
-                            "dimension": dim.get("dimension"),
-                            "value": item.get("value"),
-                            "delta": item.get("delta"),
-                            "contribution": item.get("contribution"),
+                            "dimension": item.get("dimension"),
+                            "period": item.get("period"),
+                            "sql": (item.get("sql") or "")[:800],
                         }
-                    )
-            return {
-                "metric": req.metric,
-                "time_dimension": req.time_dimension,
-                "dimensions": req.dimensions,
-                "sql_count": len(result_holder.get("sql_trace", [])),
-                "sql_preview": [
-                    {
-                        "dimension": item.get("dimension"),
-                        "period": item.get("period"),
-                        "sql": (item.get("sql") or "")[:800],
-                    }
-                    for item in result_holder.get("sql_trace", [])[:8]
-                ],
-                "top_contributors": top_contributors[:10],
-                "delta": result_holder.get("delta"),
-                "delta_rate": result_holder.get("delta_rate"),
+                        for item in result_holder.get("sql_trace", [])[:8]
+                    ],
+                    "top_contributors": top_contributors[:10],
+                    "delta": result_holder.get("delta"),
+                    "delta_rate": result_holder.get("delta_rate"),
+                }
+
+            step("rca_execute", "④ RCA 工具执行", execute)
+
+            summary = step(
+                "rca_summary",
+                "⑤ 归因结论生成",
+                lambda: {"summary": result_holder.get("summary", "")},
+            )
+
+            trace = {
+                "trace_id": trace_id,
+                "question": question,
+                "status": "ok",
+                "total_ms": round((time.time() - started) * 1000, 1),
+                "steps": steps,
             }
+            final = {
+                "trace": trace,
+                "question": question,
+                "plan": plan,
+                "result": result_holder,
+                "summary": summary.get("summary", ""),
+            }
+            self._persist_run(trace_id, question, "ok", plan, result_holder, final["summary"], steps)
+            notify("final", final)
+            return final
+        except Exception as exc:
+            trace = {
+                "trace_id": trace_id,
+                "question": question,
+                "status": "error",
+                "total_ms": round((time.time() - started) * 1000, 1),
+                "steps": steps,
+                "error": str(exc),
+            }
+            self._persist_run(trace_id, question, "error", plan, result_holder, str(exc), steps)
+            raise
 
-        step("rca_execute", "④ RCA 工具执行", execute)
+    def _top_contributors(self, result_holder: dict) -> List[dict]:
+        top_contributors = []
+        for dim in result_holder.get("dimensions", []):
+            for item in (dim.get("items") or [])[:3]:
+                top_contributors.append(
+                    {
+                        "dimension": dim.get("dimension"),
+                        "value": item.get("value"),
+                        "delta": item.get("delta"),
+                        "contribution": item.get("contribution"),
+                        "explanatory_power": item.get("explanatory_power"),
+                        "surprise": item.get("surprise"),
+                        "adtributor_score": item.get("adtributor_score"),
+                    }
+                )
+        top_contributors.sort(key=lambda item: abs(float(item.get("contribution") or 0)), reverse=True)
+        return top_contributors
 
-        summary = step(
-            "rca_summary",
-            "⑤ 归因结论生成",
-            lambda: {"summary": result_holder.get("summary", "")},
-        )
+    def _get_store_client(self) -> DorisClient:
+        if self._store_client is None:
+            self._store_client = DorisClient(
+                host=self._config["host"],
+                port=int(self._config["port"]),
+                user=self._config["user"],
+                password=self._config.get("password", ""),
+                database=self._config.get("rca_store_database", "rca_store"),
+            )
+        return self._store_client
 
-        trace = {
-            "trace_id": trace_id,
-            "question": question,
-            "status": "ok",
-            "total_ms": round((time.time() - started) * 1000, 1),
-            "steps": steps,
-        }
-        final = {
-            "trace": trace,
-            "question": question,
-            "plan": plan,
-            "result": result_holder,
-            "summary": summary.get("summary", ""),
-        }
-        notify("final", final)
-        return final
+    def _persist_run(
+        self,
+        run_id: str,
+        question: str,
+        status: str,
+        plan: dict,
+        result: dict,
+        report_text: str,
+        steps: List[dict],
+    ) -> None:
+        try:
+            db = _safe_identifier(self._config.get("rca_store_database", "rca_store"), "rca_store")
+            payload_plan = {**(plan or {}), "steps": steps}
+            candidates = self._top_contributors(result)
+            self._get_store_client().execute_write(
+                f"""
+                INSERT INTO {db}.rca_runs
+                  (run_id, question, metric_name, status, plan_json,
+                   candidates_json, causal_results_json, report_text)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    run_id,
+                    question,
+                    (plan or {}).get("metric") or (result or {}).get("metric") or "",
+                    status,
+                    json.dumps(payload_plan, ensure_ascii=False),
+                    json.dumps(candidates[:50], ensure_ascii=False),
+                    json.dumps(result or {}, ensure_ascii=False),
+                    report_text or "",
+                ),
+            )
+            for rank, item in enumerate(candidates[:50], 1):
+                self._get_store_client().execute_write(
+                    f"""
+                    INSERT INTO {db}.rca_run_candidates
+                      (candidate_id, run_id, rank_no, candidate_type, candidate_json,
+                       runtime_contribution, prior_score, causal_score, final_score)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        _stable_bigint(run_id, rank, item.get("dimension"), item.get("value")),
+                        run_id,
+                        rank,
+                        "dimension_value",
+                        json.dumps(item, ensure_ascii=False),
+                        item.get("contribution"),
+                        item.get("adtributor_score"),
+                        None,
+                        item.get("adtributor_score"),
+                    ),
+                )
+        except Exception as exc:
+            logger.warning("[SmartRCA] 持久化运行记录失败: %s", exc)
 
     def _intent(self, question: str) -> dict:
         return {
@@ -232,14 +321,20 @@ class SmartRCAPipeline:
             "influence_count": len(influences),
             "candidate_influences": [
                 {
-                    "source_metric": item.get("source_metric"),
-                    "target_metric": item.get("target_metric"),
-                    "relation_type": item.get("relation_type"),
-                    "weight": item.get("weight"),
+                    "source_node": item.get("source_node"),
+                    "source_title": item.get("source_title"),
+                    "target_node": item.get("target_node"),
+                    "target_title": item.get("target_title"),
+                    "edge_type": item.get("edge_type"),
+                    "prior_strength": item.get("prior_strength"),
+                    "confidence": item.get("confidence"),
+                    "prior_score": item.get("prior_score"),
                     "direction": item.get("direction"),
+                    "lag": item.get("lag"),
                 }
                 for item in influences[:20]
             ],
+            "rca_graph": options.get("rca_graph", {}),
         }
 
     def _pack_recalls(self, options: dict, influences: dict) -> dict:
@@ -335,3 +430,15 @@ class SmartRCAPipeline:
             "dimensions": dims[:5],
             "limit": int(data.get("limit") or 20),
         }
+
+
+def _stable_bigint(*parts: Any) -> int:
+    raw = "\n".join(str(part or "") for part in parts)
+    return int(md5(raw.encode("utf-8")).hexdigest()[:15], 16)
+
+
+def _safe_identifier(value: str, default: str) -> str:
+    text = str(value or default).strip() or default
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text):
+        raise ValueError(f"非法数据库名: {text}")
+    return text

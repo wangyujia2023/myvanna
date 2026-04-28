@@ -8,6 +8,23 @@
 
 USE retail_dw;
 
+-- 0. 城市维表：用于把 city_code 显示为城市/大区名称
+INSERT INTO dim_city_info
+  (city_code, city_name, province_name, region_id, region_name)
+VALUES
+  ('BJ', '北京', '北京市', 1, '华北'),
+  ('SH', '上海', '上海市', 2, '华东'),
+  ('GZ', '广州', '广东省', 3, '华南'),
+  ('SZ', '深圳', '广东省', 4, '华南'),
+  ('FZ', '福州', '福建省', 5, '华东');
+
+-- 0.1 会员类型维表：用于把 is_plus_vip 显示为会员类型名称
+INSERT INTO dim_member_type_info
+  (member_type_code, member_type_name, member_level, description)
+VALUES
+  (1, 'PLUS会员', 'PLUS', '付费会员/高价值会员'),
+  (0, '普通会员', 'NORMAL', '非PLUS普通会员');
+
 -- 1. 用户维表：覆盖城市、PLUS/普通会员、人群分层
 INSERT INTO dim_user_info
   (user_id, phone_hash, gender, age_group, city_code, is_plus_vip, register_time)

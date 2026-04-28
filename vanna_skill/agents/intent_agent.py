@@ -45,13 +45,17 @@ _TIME_PATTERNS: List[tuple] = [
     # 具体年份 2026年
     (re.compile(r"(\d{4})年"), "year"),
     # 最近N天
-    (re.compile(r"最近\s*(\d+)\s*天"), "recent_days"),
+    (re.compile(r"(?:最近|近|过去)\s*(\d+)\s*天"), "recent_days"),
     # 本月/本年/上月/上季度
     (re.compile(r"本月|当月"), "this_month"),
     (re.compile(r"本年|今年"), "this_year"),
+    (re.compile(r"去年"), "last_year"),
     (re.compile(r"上月|上个月"), "last_month"),
+    (re.compile(r"本周|这周|这个星期"), "this_week"),
+    (re.compile(r"上周|上星期"), "last_week"),
     (re.compile(r"上季度"), "last_quarter"),
     (re.compile(r"本季度|当季"), "this_quarter"),
+    (re.compile(r"前天"), "day_before_yesterday"),
 ]
 
 

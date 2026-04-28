@@ -54,6 +54,8 @@ _cube_admin_client: Optional[DorisClient] = None
 _cube_validator: Optional[CubeConfigValidator] = None
 _rca_service: Optional[RCAService] = None
 _smart_rca_pipeline: Optional[SmartRCAPipeline] = None
+_rca_admin_client: Optional[DorisClient] = None
+_execute_client: Optional[DorisClient] = None
 
 
 CUBE_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
@@ -99,6 +101,12 @@ CUBE_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
         "order": "template_type, template_name",
         "fields": ["template_id", "template_name", "template_type", "title", "template_sql", "params_json", "visible", "version"],
     },
+    "semantic-aliases": {
+        "table": "cube_semantic_aliases",
+        "pk": "alias_id",
+        "order": "entity_type, entity_name, weight DESC, alias_text",
+        "fields": ["alias_id", "entity_type", "entity_name", "alias_text", "source", "match_type", "weight", "visible", "version"],
+    },
     "versions": {
         "table": "cube_model_versions",
         "pk": "version_id",
@@ -130,6 +138,50 @@ CUBE_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
         "pk": "influence_id",
         "order": "target_metric, source_metric",
         "fields": ["influence_id", "source_metric", "target_metric", "relation_type", "weight", "direction", "description", "visible"],
+    },
+}
+
+
+RCA_ADMIN_ENTITIES: dict[str, dict[str, Any]] = {
+    "nodes": {
+        "table": "rca_nodes",
+        "pk": "node_id",
+        "order": "node_type, node_name",
+        "fields": ["node_id", "node_name", "node_type", "title", "description", "cube_ref", "expression", "enabled", "version"],
+    },
+    "edges": {
+        "table": "rca_edges",
+        "pk": "edge_id",
+        "order": "target_node, ABS(prior_strength * confidence) DESC, source_node",
+        "fields": ["edge_id", "source_node", "target_node", "edge_type", "direction", "prior_strength", "confidence", "lag", "condition_json", "evidence_json", "enabled", "version"],
+    },
+    "causal-specs": {
+        "table": "rca_causal_specs",
+        "pk": "spec_id",
+        "order": "outcome_node, treatment_node",
+        "fields": ["spec_id", "treatment_node", "outcome_node", "common_causes_json", "instruments_json", "effect_modifiers_json", "graph_gml", "estimator", "refuters_json", "enabled", "version"],
+    },
+    "profiles": {
+        "table": "rca_profiles",
+        "pk": "profile_id",
+        "order": "metric_name, profile_name",
+        "fields": ["profile_id", "profile_name", "metric_name", "default_dimensions_json", "default_baseline", "min_contribution", "max_depth", "algorithm", "enabled", "description"],
+    },
+    "runs": {
+        "table": "rca_runs",
+        "pk": "run_id",
+        "order": "created_at DESC",
+        "fields": ["run_id", "question", "metric_name", "status", "plan_json", "candidates_json", "causal_results_json", "report_text"],
+        "timestamp": "created_at",
+        "readonly": True,
+    },
+    "run-candidates": {
+        "table": "rca_run_candidates",
+        "pk": "candidate_id",
+        "order": "run_id, rank_no",
+        "fields": ["candidate_id", "run_id", "rank_no", "candidate_type", "candidate_json", "runtime_contribution", "prior_score", "causal_score", "final_score"],
+        "timestamp": "created_at",
+        "readonly": True,
     },
 }
 
@@ -207,6 +259,19 @@ def get_cube_admin_client() -> DorisClient:
     return _cube_admin_client
 
 
+def get_rca_admin_client() -> DorisClient:
+    global _rca_admin_client, CONFIG
+    if _rca_admin_client is None:
+        _rca_admin_client = DorisClient(
+            host=CONFIG["host"],
+            port=CONFIG["port"],
+            user=CONFIG["user"],
+            password=CONFIG.get("password", ""),
+            database=CONFIG.get("rca_store_database", "rca_store"),
+        )
+    return _rca_admin_client
+
+
 def get_cube_validator() -> CubeConfigValidator:
     global _cube_validator
     if _cube_validator is None:
@@ -228,6 +293,20 @@ def get_smart_rca_pipeline() -> SmartRCAPipeline:
     return _smart_rca_pipeline
 
 
+def get_execute_client() -> DorisClient:
+    """Lightweight business DB client for manual SQL execution."""
+    global _execute_client, CONFIG
+    if _execute_client is None:
+        _execute_client = DorisClient(
+            host=CONFIG["host"],
+            port=CONFIG["port"],
+            user=CONFIG["user"],
+            password=CONFIG.get("password", ""),
+            database=CONFIG.get("database", "retail_dw"),
+        )
+    return _execute_client
+
+
 def _cube_entity_meta(entity: str) -> dict[str, Any]:
     meta = CUBE_ADMIN_ENTITIES.get(entity)
     if not meta:
@@ -235,9 +314,118 @@ def _cube_entity_meta(entity: str) -> dict[str, Any]:
     return meta
 
 
+def _rca_entity_meta(entity: str) -> dict[str, Any]:
+    meta = RCA_ADMIN_ENTITIES.get(entity)
+    if not meta:
+        raise HTTPException(404, f"未知 RCA 实体: {entity}")
+    return meta
+
+
 def _stable_bigint(*parts: Any) -> int:
     raw = "\n".join(str(part or "") for part in parts)
     return int(hashlib.md5(raw.encode("utf-8")).hexdigest()[:15], 16)
+
+
+def _safe_db_name(value: str, default: str) -> str:
+    name = str(value or default).strip() or default
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise HTTPException(400, f"非法数据库名: {name}")
+    return name
+
+
+def _cube_store_db() -> str:
+    return _safe_db_name(CONFIG.get("cube_store_database", "cube_store"), "cube_store")
+
+
+def _rca_store_db() -> str:
+    return _safe_db_name(CONFIG.get("rca_store_database", "rca_store"), "rca_store")
+
+
+def _cube_primary_key_columns(rows: list[dict[str, Any]], simple_col: re.Pattern[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for row in rows:
+        cube_name = str(row.get("cube_name") or "")
+        column = str(row.get("sql_expr") or "").strip()
+        if cube_name and row.get("primary_key_flag") and simple_col.match(column):
+            result.setdefault(cube_name, column)
+    return result
+
+
+def _cube_label_columns(rows: list[dict[str, Any]], simple_col: re.Pattern[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for row in rows:
+        cube_name = str(row.get("cube_name") or "")
+        dimension_name = str(row.get("dimension_name") or "")
+        column = str(row.get("sql_expr") or "").strip()
+        if not cube_name or not simple_col.match(column):
+            continue
+        if dimension_name.endswith("_name") or dimension_name in {"name", "title"}:
+            result.setdefault(cube_name, column)
+    return result
+
+
+def _enum_business_group(cube_name: str, dimension_name: str) -> tuple[str, str, int]:
+    if cube_name == "cities":
+        return "city", "城市", 10
+    if cube_name == "member_types":
+        return "member", "会员", 20
+    if cube_name == "stores":
+        return "store", "门店", 30
+    if cube_name in {"orders", "users", "refunds"}:
+        return "detail", "明细表", 90
+    return "other", "其他维度", 80
+
+
+def _enum_recommended(cube_name: str, dimension_name: str, eligible: bool) -> bool:
+    if not eligible:
+        return False
+    recommended = {
+        "cities": {"city_name", "region_name"},
+        "member_types": {"member_type", "member_level"},
+        "stores": {"store_name", "store_type"},
+    }
+    return dimension_name in recommended.get(cube_name, set())
+
+
+def _enum_option_visible(cube_name: str, dimension_name: str) -> bool:
+    # 门店 ID 是门店名称枚举的稳定 value_code，不作为独立业务枚举展示。
+    return not (cube_name == "stores" and dimension_name == "store_id")
+
+
+def _enum_option_title(cube_name: str, dimension_name: str, title: str) -> str:
+    if cube_name == "stores" and dimension_name == "store_name":
+        return "门店"
+    return title or dimension_name
+
+
+def _enum_collect_columns(
+    cube_name: str,
+    dimension_name: str,
+    dimension_column: str,
+    key_columns: dict[str, str],
+    label_columns: dict[str, str],
+) -> tuple[str, str]:
+    """Return (code_column, label_column) for enum collection.
+
+    Display dimensions such as cities.city_name should store the stable business
+    key as value_code and the human-readable text as value_label.
+    """
+    code_column = dimension_column
+    label_column = dimension_column
+    key_column = key_columns.get(cube_name)
+    label_candidate = label_columns.get(cube_name)
+    if key_column and dimension_name in {"city_name", "member_type", "store_name"}:
+        code_column = key_column
+        label_column = dimension_column
+    elif (
+        key_column
+        and (dimension_name.endswith("_code") or dimension_name.endswith("_id"))
+        and label_candidate
+        and label_candidate != dimension_column
+    ):
+        code_column = dimension_column
+        label_column = label_candidate
+    return code_column, label_column
 
 
 def validate_readonly_sql(sql: str) -> None:
@@ -387,7 +575,9 @@ class ConfigRequest(BaseModel):
     semantic_to_langchain_fallback_enabled: bool = False
     semantic_sql_rag_enabled: bool = False
     cube_store_database: str = "cube_store"
+    rca_store_database: str = "rca_store"
     cube_model_reload_each_request: bool = False
+    cube_default_time_scope: str = ""
 
 
 class SystemPromptRequest(BaseModel):
@@ -434,6 +624,9 @@ class CubeAdminUpsertRequest(BaseModel):
 class CubeEnumCollectRequest(BaseModel):
     max_values: int = 200
     max_cardinality: int = 500
+    include_cubes: list[str] = Field(default_factory=list)
+    include_dimensions: list[str] = Field(default_factory=list)
+    exclude_cubes: list[str] = Field(default_factory=lambda: ["orders", "users", "refunds"])
 
 
 class CubeValidateRequest(BaseModel):
@@ -565,6 +758,15 @@ def smart_rca_stream(q: str = Query(..., description="归因分析问题")):
     )
 
 
+@app.post("/rca/smart")
+def smart_rca(req: AskRequest):
+    try:
+        return get_smart_rca_pipeline().run(req.question)
+    except Exception as e:
+        logger.exception(f"[rca/smart] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
 @app.get("/cube/model/version")
 def cube_model_version():
     try:
@@ -633,10 +835,11 @@ def cube_admin_list(entity: str, limit: int = 300):
     limit = max(1, min(int(limit or 300), 1000))
     timestamp_field = meta.get("timestamp", "updated_at")
     fields = ", ".join(meta["fields"] + [timestamp_field])
+    db_name = _cube_store_db()
     rows = get_cube_admin_client().execute(
         f"""
         SELECT {fields}
-        FROM cube_store.{meta['table']}
+        FROM {db_name}.{meta['table']}
         ORDER BY {meta['order']}
         LIMIT {limit}
         """
@@ -662,9 +865,10 @@ def cube_admin_upsert(entity: str, req: CubeAdminUpsertRequest):
     columns = [col for col in meta["fields"] if col in row]
     placeholders = ", ".join(["%s"] * len(columns))
     values = [row[col] for col in columns]
+    db_name = _cube_store_db()
     get_cube_admin_client().execute_write(
         f"""
-        INSERT INTO cube_store.{meta['table']} ({", ".join(columns)})
+        INSERT INTO {db_name}.{meta['table']} ({", ".join(columns)})
         VALUES ({placeholders})
         """,
         values,
@@ -675,8 +879,9 @@ def cube_admin_upsert(entity: str, req: CubeAdminUpsertRequest):
 @app.delete("/cube/admin/{entity}/{row_id}")
 def cube_admin_delete(entity: str, row_id: str):
     meta = _cube_entity_meta(entity)
+    db_name = _cube_store_db()
     get_cube_admin_client().execute_write(
-        f"DELETE FROM cube_store.{meta['table']} WHERE {meta['pk']} = %s",
+        f"DELETE FROM {db_name}.{meta['table']} WHERE {meta['pk']} = %s",
         (row_id,),
     )
     return {"status": "ok", "entity": entity, "deleted": row_id}
@@ -688,16 +893,16 @@ def cube_admin_sync_cache(entity: str):
     return get_cube_service().reload_models()
 
 
-@app.post("/cube/admin/dimension-values/collect")
-def cube_collect_dimension_values(req: CubeEnumCollectRequest):
+@app.get("/cube/admin/dimension-values/collect-options")
+def cube_collect_dimension_value_options():
     client = get_cube_admin_client()
-    max_values = max(1, min(int(req.max_values or 200), 1000))
-    max_cardinality = max(1, min(int(req.max_cardinality or 500), 5000))
-    dims = client.execute(
-        """
-        SELECT d.cube_name, d.dimension_name, d.sql_expr, d.dimension_type, m.sql_table
-        FROM cube_store.cube_dimensions d
-        JOIN cube_store.cube_models m ON d.cube_name = m.cube_name
+    db_name = _cube_store_db()
+    rows = client.execute(
+        f"""
+        SELECT d.cube_name, d.dimension_name, d.title, d.sql_expr,
+               d.dimension_type, d.primary_key_flag, m.sql_table
+        FROM {db_name}.cube_dimensions d
+        JOIN {db_name}.cube_models m ON d.cube_name = m.cube_name
         WHERE d.visible = 1
           AND m.visible = 1
           AND d.dimension_type IN ('string', 'number', 'boolean')
@@ -705,6 +910,81 @@ def cube_collect_dimension_values(req: CubeEnumCollectRequest):
         """
     )
     simple_col = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    key_columns = _cube_primary_key_columns(rows, simple_col)
+    label_columns = _cube_label_columns(rows, simple_col)
+    options = []
+    for row in rows:
+        cube_name = row["cube_name"]
+        dimension_name = row["dimension_name"]
+        if not _enum_option_visible(cube_name, dimension_name):
+            continue
+        column = (row.get("sql_expr") or "").strip()
+        table = (row.get("sql_table") or "").strip()
+        eligible = bool(table and simple_col.match(column))
+        code_column, label_column = _enum_collect_columns(
+            cube_name,
+            dimension_name,
+            column,
+            key_columns,
+            label_columns,
+        )
+        group, group_title, group_order = _enum_business_group(cube_name, dimension_name)
+        recommended = _enum_recommended(cube_name, dimension_name, eligible)
+        reason = ""
+        if not eligible:
+            reason = "仅支持简单列名维度自动采集"
+        elif not recommended:
+            reason = "非推荐项，请确认低基数且会被自然语言提到"
+        options.append({
+            "key": f"{cube_name}.{dimension_name}",
+            "cube_name": cube_name,
+            "dimension_name": dimension_name,
+            "title": _enum_option_title(cube_name, dimension_name, row.get("title") or ""),
+            "sql_expr": column,
+            "dimension_type": row.get("dimension_type") or "",
+            "sql_table": table,
+            "code_column": code_column,
+            "label_column": label_column,
+            "group": group,
+            "group_title": group_title,
+            "group_order": group_order,
+            "eligible": eligible,
+            "recommended": recommended,
+            "reason": reason,
+        })
+    options.sort(key=lambda item: (
+        item["group_order"],
+        0 if item["recommended"] else 1,
+        item["cube_name"],
+        item["dimension_name"],
+    ))
+    return {"options": options}
+
+
+@app.post("/cube/admin/dimension-values/collect")
+def cube_collect_dimension_values(req: CubeEnumCollectRequest):
+    client = get_cube_admin_client()
+    max_values = max(1, min(int(req.max_values or 200), 1000))
+    max_cardinality = max(1, min(int(req.max_cardinality or 500), 5000))
+    include_cubes = {str(item).strip() for item in (req.include_cubes or []) if str(item).strip()}
+    include_dimensions = {str(item).strip() for item in (req.include_dimensions or []) if str(item).strip()}
+    exclude_cubes = {str(item).strip() for item in (req.exclude_cubes or []) if str(item).strip()}
+    db_name = _cube_store_db()
+    dims = client.execute(
+        f"""
+        SELECT d.cube_name, d.dimension_name, d.sql_expr, d.dimension_type,
+               d.primary_key_flag, m.sql_table
+        FROM {db_name}.cube_dimensions d
+        JOIN {db_name}.cube_models m ON d.cube_name = m.cube_name
+        WHERE d.visible = 1
+          AND m.visible = 1
+          AND d.dimension_type IN ('string', 'number', 'boolean')
+        ORDER BY d.cube_name, d.dimension_name
+        """
+    )
+    simple_col = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    key_columns = _cube_primary_key_columns(dims, simple_col)
+    label_columns = _cube_label_columns(dims, simple_col)
     inserted = 0
     skipped: list[dict[str, Any]] = []
     collected: list[dict[str, Any]] = []
@@ -713,32 +993,55 @@ def cube_collect_dimension_values(req: CubeEnumCollectRequest):
         dimension_name = dim["dimension_name"]
         column = (dim.get("sql_expr") or "").strip()
         table = (dim.get("sql_table") or "").strip()
-        if not table or not simple_col.match(column):
-            skipped.append({"dimension": f"{cube_name}.{dimension_name}", "reason": "sql_expr 非简单列名"})
+        dimension_key = f"{cube_name}.{dimension_name}"
+        if include_dimensions and dimension_key not in include_dimensions:
+            skipped.append({"dimension": dimension_key, "reason": "未勾选采集"})
             continue
+        if include_cubes and cube_name not in include_cubes:
+            skipped.append({"dimension": dimension_key, "reason": "Cube 未勾选采集"})
+            continue
+        explicitly_selected = dimension_key in include_dimensions or cube_name in include_cubes
+        if cube_name in exclude_cubes and not explicitly_selected:
+            skipped.append({"dimension": dimension_key, "reason": "明细/事实 Cube 默认不自动采集枚举"})
+            continue
+        if not table or not simple_col.match(column):
+            skipped.append({"dimension": dimension_key, "reason": "sql_expr 非简单列名"})
+            continue
+        code_column, label_column = _enum_collect_columns(
+            cube_name,
+            dimension_name,
+            column,
+            key_columns,
+            label_columns,
+        )
         rows = client.execute(
             f"""
-            SELECT CAST({column} AS STRING) AS value_code, COUNT(*) AS usage_count
+            SELECT
+              CAST({code_column} AS STRING) AS value_code,
+              CAST({label_column} AS STRING) AS value_label,
+              COUNT(*) AS usage_count
             FROM {table}
-            WHERE {column} IS NOT NULL
-            GROUP BY {column}
+            WHERE {code_column} IS NOT NULL
+              AND {label_column} IS NOT NULL
+            GROUP BY {code_column}, {label_column}
             ORDER BY usage_count DESC
             LIMIT {max_cardinality + 1}
             """
         )
         if len(rows) > max_cardinality:
-            skipped.append({"dimension": f"{cube_name}.{dimension_name}", "reason": f"基数超过 {max_cardinality}"})
+            skipped.append({"dimension": dimension_key, "reason": f"基数超过 {max_cardinality}"})
             continue
         count = 0
         for row in rows[:max_values]:
             value_code = str(row.get("value_code") or "").strip()
+            value_label = str(row.get("value_label") or value_code).strip()
             if not value_code:
                 continue
             value_id = _stable_bigint(cube_name, dimension_name, value_code)
             usage_count = int(row.get("usage_count", 0) or 0)
             client.execute_write(
-                """
-                INSERT INTO cube_store.cube_dimension_values
+                f"""
+                INSERT INTO {db_name}.cube_dimension_values
                   (value_id, cube_name, dimension_name, value_code, value_label,
                    aliases_json, source, source_table, source_column, usage_count, visible, version)
                 VALUES (%s, %s, %s, %s, %s, %s, 'scan', %s, %s, %s, 1, 1)
@@ -748,16 +1051,16 @@ def cube_collect_dimension_values(req: CubeEnumCollectRequest):
                     cube_name,
                     dimension_name,
                     value_code,
-                    value_code,
+                    value_label,
                     "[]",
                     table,
-                    column,
+                    label_column,
                     usage_count,
                 ),
             )
             inserted += 1
             count += 1
-        collected.append({"dimension": f"{cube_name}.{dimension_name}", "count": count})
+        collected.append({"dimension": dimension_key, "count": count})
     manifest = get_cube_service().reload_models()
     return {
         "status": "ok",
@@ -798,6 +1101,213 @@ def rca_options():
         raise HTTPException(500, str(e))
 
 
+@app.get("/rca/graph")
+def rca_graph(metric: Optional[str] = Query(None, description="可选目标指标，如 gmv")):
+    try:
+        service = get_rca_service()
+        if metric:
+            return service.metric_graph(metric)
+        return service.graph_summary()
+    except Exception as e:
+        logger.exception(f"[rca/graph] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+def _json_obj(value: Any, default: Any) -> Any:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _rca_run_payload(row: dict[str, Any]) -> dict[str, Any]:
+    plan = _json_obj(row.get("plan_json"), {})
+    result = _json_obj(row.get("causal_results_json"), {})
+    candidates = _json_obj(row.get("candidates_json"), [])
+    steps = plan.get("steps") if isinstance(plan, dict) else []
+    total_ms = 0.0
+    if isinstance(steps, list):
+        total_ms = sum(float(item.get("duration_ms", 0) or 0) for item in steps if isinstance(item, dict))
+    return {
+        "run_id": row.get("run_id"),
+        "question": row.get("question"),
+        "metric_name": row.get("metric_name"),
+        "status": row.get("status"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "plan": plan,
+        "steps": steps if isinstance(steps, list) else [],
+        "candidates": candidates if isinstance(candidates, list) else [],
+        "result": result,
+        "summary": row.get("report_text") or "",
+        "total_ms": total_ms,
+    }
+
+
+@app.get("/rca/runs")
+def rca_runs(limit: int = 30):
+    limit = max(1, min(int(limit or 30), 200))
+    db_name = _rca_store_db()
+    try:
+        rows = get_rca_admin_client().execute(
+            f"""
+            SELECT run_id, question, metric_name, status, plan_json,
+                   candidates_json, causal_results_json, report_text,
+                   created_at, updated_at
+            FROM {db_name}.rca_runs
+            ORDER BY created_at DESC
+            LIMIT {limit}
+            """
+        )
+        runs = [_rca_run_payload(row) for row in rows]
+        ok = sum(1 for item in runs if item.get("status") == "ok")
+        total = len(runs)
+        avg_ms = round(sum(float(item.get("total_ms") or 0) for item in runs) / total, 1) if total else 0
+        return {
+            "runs": runs,
+            "stats": {
+                "total": total,
+                "ok": ok,
+                "error": total - ok,
+                "success_rate": f"{ok / total * 100:.1f}%" if total else "—",
+                "avg_ms": avg_ms,
+            },
+        }
+    except Exception as e:
+        logger.exception(f"[rca/runs] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/rca/runs/{run_id}")
+def rca_run_detail(run_id: str):
+    db_name = _rca_store_db()
+    try:
+        rows = get_rca_admin_client().execute(
+            f"""
+            SELECT run_id, question, metric_name, status, plan_json,
+                   candidates_json, causal_results_json, report_text,
+                   created_at, updated_at
+            FROM {db_name}.rca_runs
+            WHERE run_id = %s
+            LIMIT 1
+            """,
+            (run_id,),
+        )
+        if not rows:
+            raise HTTPException(404, "RCA run not found")
+        candidates = get_rca_admin_client().execute(
+            f"""
+            SELECT candidate_id, run_id, rank_no, candidate_type, candidate_json,
+                   runtime_contribution, prior_score, causal_score, final_score, created_at
+            FROM {db_name}.rca_run_candidates
+            WHERE run_id = %s
+            ORDER BY rank_no
+            LIMIT 200
+            """,
+            (run_id,),
+        )
+        payload = _rca_run_payload(rows[0])
+        payload["candidate_rows"] = [
+            {**row, "candidate": _json_obj(row.get("candidate_json"), {})}
+            for row in candidates
+        ]
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"[rca/runs/detail] 失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/rca/admin/entities")
+def rca_admin_entities():
+    return {
+        "entities": [
+            {
+                "name": name,
+                "table": meta["table"],
+                "pk": meta["pk"],
+                "fields": meta["fields"],
+                "readonly": bool(meta.get("readonly", False)),
+            }
+            for name, meta in RCA_ADMIN_ENTITIES.items()
+        ]
+    }
+
+
+@app.get("/rca/admin/{entity}")
+def rca_admin_list(entity: str, limit: int = 300):
+    meta = _rca_entity_meta(entity)
+    limit = max(1, min(int(limit or 300), 1000))
+    timestamp_field = meta.get("timestamp", "updated_at")
+    fields = ", ".join(meta["fields"] + [timestamp_field])
+    db_name = _rca_store_db()
+    rows = get_rca_admin_client().execute(
+        f"""
+        SELECT {fields}
+        FROM {db_name}.{meta['table']}
+        ORDER BY {meta['order']}
+        LIMIT {limit}
+        """
+    )
+    return {
+        "entity": entity,
+        "table": meta["table"],
+        "pk": meta["pk"],
+        "fields": meta["fields"],
+        "readonly": bool(meta.get("readonly", False)),
+        "rows": rows,
+    }
+
+
+@app.post("/rca/admin/{entity}")
+def rca_admin_upsert(entity: str, req: CubeAdminUpsertRequest):
+    meta = _rca_entity_meta(entity)
+    if meta.get("readonly"):
+        raise HTTPException(400, f"{entity} 为运行记录，只读")
+    row = {k: v for k, v in (req.row or {}).items() if k in meta["fields"]}
+    pk = meta["pk"]
+    if pk not in row or row.get(pk) in ("", None):
+        row[pk] = _stable_bigint("rca", entity, json.dumps(row, ensure_ascii=False, sort_keys=True))
+    if not row:
+        raise HTTPException(400, "row 不能为空")
+    columns = [col for col in meta["fields"] if col in row]
+    placeholders = ", ".join(["%s"] * len(columns))
+    values = [row[col] for col in columns]
+    db_name = _rca_store_db()
+    get_rca_admin_client().execute_write(
+        f"""
+        INSERT INTO {db_name}.{meta['table']} ({", ".join(columns)})
+        VALUES ({placeholders})
+        """,
+        values,
+    )
+    global _rca_service, _smart_rca_pipeline
+    _rca_service = None
+    _smart_rca_pipeline = None
+    return {"status": "ok", "entity": entity, "pk": pk, "id": row[pk]}
+
+
+@app.delete("/rca/admin/{entity}/{row_id}")
+def rca_admin_delete(entity: str, row_id: str):
+    meta = _rca_entity_meta(entity)
+    if meta.get("readonly"):
+        raise HTTPException(400, f"{entity} 为运行记录，只读")
+    db_name = _rca_store_db()
+    get_rca_admin_client().execute_write(
+        f"DELETE FROM {db_name}.{meta['table']} WHERE {meta['pk']} = %s",
+        (row_id,),
+    )
+    global _rca_service, _smart_rca_pipeline
+    _rca_service = None
+    _smart_rca_pipeline = None
+    return {"status": "ok", "entity": entity, "deleted": row_id}
+
+
 @app.post("/rca/analyze")
 def rca_analyze(req: RCAAnalyzeRequest):
     try:
@@ -831,7 +1341,7 @@ def execute_sql(body: dict):
     validate_readonly_sql(sql)
     try:
         logger.info("[execute] 执行 SQL:\n%s", sql)
-        df = get_vanna().run_sql(sql)
+        df = get_execute_client().query_df(sql)
         return {
             "columns": df.columns.tolist(),
             "rows": df.head(200).values.tolist(),
@@ -1091,7 +1601,7 @@ def get_config():
 
 @app.post("/config")
 def update_config(req: ConfigRequest):
-    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store, _cube_service, _cube_pipeline, _cube_admin_client, _cube_validator, _rca_service, _smart_rca_pipeline
+    global CONFIG, _vanna, _ask_lc_pipeline, _semantic_pipeline, _prompt_store, _cube_service, _cube_pipeline, _cube_admin_client, _cube_validator, _rca_service, _smart_rca_pipeline, _rca_admin_client, _execute_client
     qwen_api_key = req.qwen_api_key.strip()
     updated = CONFIG.copy()
     updated.update({
@@ -1105,7 +1615,9 @@ def update_config(req: ConfigRequest):
         "semantic_to_langchain_fallback_enabled": req.semantic_to_langchain_fallback_enabled,
         "semantic_sql_rag_enabled": req.semantic_sql_rag_enabled,
         "cube_store_database": req.cube_store_database.strip() or "cube_store",
+        "rca_store_database": req.rca_store_database.strip() or "rca_store",
         "cube_model_reload_each_request": req.cube_model_reload_each_request,
+        "cube_default_time_scope": req.cube_default_time_scope.strip(),
     })
     if qwen_api_key and "..." not in qwen_api_key:
         updated["qwen_api_key"] = qwen_api_key
@@ -1120,6 +1632,8 @@ def update_config(req: ConfigRequest):
     _cube_validator = None
     _rca_service = None
     _smart_rca_pipeline = None
+    _rca_admin_client = None
+    _execute_client = None
     invalidate_semantic_cache()
     return {"status": "ok", "message": "配置已更新，连接已重置"}
 

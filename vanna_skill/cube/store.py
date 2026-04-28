@@ -13,6 +13,7 @@ from .models import (
     CubeJoin,
     CubeMeasure,
     CubeModel,
+    CubeSemanticAlias,
     CubeSegment,
     CubeTemplate,
 )
@@ -160,6 +161,7 @@ class CubeStoreRepository:
                 """
             )
         ]
+        aliases = self._load_semantic_aliases()
         payload = {
             "models": [m.__dict__ for m in models],
             "measures": [m.__dict__ for m in measures],
@@ -168,6 +170,7 @@ class CubeStoreRepository:
             "joins": [j.__dict__ for j in joins],
             "segments": [s.__dict__ for s in segments],
             "templates": [t.__dict__ for t in templates],
+            "aliases": [a.__dict__ for a in aliases],
         }
         checksum = hashlib.md5(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -181,9 +184,41 @@ class CubeStoreRepository:
             joins=joins,
             segments=segments,
             templates=templates,
+            aliases=aliases,
             version_no=int(version.get("version_no", 0) or 0),
             checksum=checksum,
         )
+
+    def _load_semantic_aliases(self) -> List[CubeSemanticAlias]:
+        try:
+            rows = self._db.execute(
+                """
+                SELECT entity_type, entity_name, alias_text, source, weight, match_type, visible
+                FROM cube_store.cube_semantic_aliases
+                WHERE visible = 1
+                ORDER BY weight DESC, LENGTH(alias_text) DESC, alias_text
+                """
+            )
+        except Exception as exc:
+            if "cube_semantic_aliases" in str(exc) and "does not exist" in str(exc).lower():
+                logger.warning(
+                    "[CubeStore] cube_semantic_aliases 不存在，跳过语义别名增强；"
+                    "执行 sql/cube_store.sql 后可启用通用别名维护。"
+                )
+                return []
+            raise
+        return [
+            CubeSemanticAlias(
+                entity_type=str(row.get("entity_type") or ""),
+                entity_name=str(row.get("entity_name") or ""),
+                alias_text=str(row.get("alias_text") or ""),
+                source=str(row.get("source") or "manual"),
+                weight=float(row.get("weight", 1.0) or 1.0),
+                match_type=str(row.get("match_type") or "contains"),
+                visible=bool(row.get("visible", 1)),
+            )
+            for row in rows
+        ]
 
     def _load_dimension_values(self) -> List[CubeDimensionValue]:
         try:
@@ -256,13 +291,13 @@ def _merge_dimension_values(
         dim = by_key.get((item.cube_name, item.dimension_name))
         if dim is None:
             continue
-        code = item.value_code
-        if not code:
+        target = item.value_code
+        if not target:
             continue
-        candidates = [code, item.value_label, *item.aliases]
+        candidates = [item.value_code, item.value_label, *item.aliases]
         for candidate in candidates:
             key = str(candidate or "").strip()
             if not key:
                 continue
             # enum_mapping_json 是人工强配置，优先级高于自动采集值。
-            dim.enum_mapping.setdefault(key, code)
+            dim.enum_mapping.setdefault(key, target)

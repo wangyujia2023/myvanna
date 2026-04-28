@@ -13,6 +13,11 @@ cube(`stores`, {
       title: `门店ID`,
       primary_key: true,
     },
+    store_name: {
+      sql: `store_name`,
+      type: `string`,
+      title: `门店名称`,
+    },
     store_type: {
       sql: `store_type`,
       type: `string`,
